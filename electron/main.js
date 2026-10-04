@@ -141,8 +141,12 @@ app.whenReady().then(async () => {
   try {
     await startServer();
   } catch (err) {
-    console.error('Backend error:', err);
-    dialog.showErrorBox('Backend Startup Error', err.stack || err.message);
+    if (err.code === 'EADDRINUSE' || err.message?.includes('EADDRINUSE')) {
+      console.log('[main] Port 5000 is already active.');
+    } else {
+      console.error('Backend error:', err);
+      dialog.showErrorBox('Backend Startup Error', err.stack || err.message);
+    }
   }
   createTray();
 });

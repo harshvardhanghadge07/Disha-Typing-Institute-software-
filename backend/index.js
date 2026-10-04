@@ -99,4 +99,8 @@ const adminHash=await bcrypt.hash(adminPass,12);
 await User.findOneAndUpdate({email:adminEmail},{email:adminEmail,hash:adminHash,role:'admin'},{upsert:true});
 if(!await Setting.findOne({key:'pin'}))await Setting.create({key:'pin',value:await bcrypt.hash(process.env.DOC_PIN||'123456',12)});
 if(!await Batch.countDocuments())await Batch.insertMany(['2026-06','2026-12','2027-06','2027-12'].map(d=>({start:d,name:new Date(d+'-01').toLocaleString('en',{month:'long',year:'numeric'})})));
-app.listen(process.env.PORT||5000,()=>console.log('DISHA running on :'+(process.env.PORT||5000)));
+const srv = app.listen(process.env.PORT||5000,()=>console.log('DISHA running on :'+(process.env.PORT||5000)));
+srv.on('error', err => {
+  if (err.code === 'EADDRINUSE') console.log('Port ' + (process.env.PORT||5000) + ' is already active.');
+  else console.error(err);
+});
