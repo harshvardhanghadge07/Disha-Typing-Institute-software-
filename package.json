@@ -1,0 +1,78 @@
+{
+  "name": "disha",
+  "version": "1.0.0",
+  "description": "DISHA Computer Typing Institute — Desktop Management Software",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "install:all": "npm i --prefix backend && npm i --prefix frontend",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "build:frontend": "npm run build --prefix frontend",
+    "electron": "electron .",
+    "electron:dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\" \"wait-on http://localhost:5000 && electron .\"",
+    "build": "npm run build:frontend && electron-builder --win --x64",
+    "start": "npm start --prefix backend"
+  },
+  "build": {
+    "appId": "in.disha.typing",
+    "productName": "DISHA Typing Institute",
+    "copyright": "Copyright © 2024 DISHA Computer Typing Institute",
+    "asar": false,
+    "directories": {
+      "buildResources": "electron/assets",
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "backend/**/*",
+      "frontend/dist/**/*",
+      "!backend/private-uploads/**/*",
+      "!**/node_modules/.cache/**/*",
+      "!**/*.md"
+    ],
+    "extraResources": [],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "electron/assets/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "installerIcon": "electron/assets/icon.ico",
+      "uninstallerIcon": "electron/assets/icon.ico",
+      "installerHeaderIcon": "electron/assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DISHA Typing Institute",
+      "runAfterFinish": true,
+      "license": "electron/assets/LICENSE.rtf"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "electron/assets/icon.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "electron/assets/icon.png"
+    }
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "concurrently": "^10.0.5",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "jimp": "^1.6.1",
+    "png-to-ico": "^3.0.2",
+    "wait-on": "^9.5.1"
+  }
+}
