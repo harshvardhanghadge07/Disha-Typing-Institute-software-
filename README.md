@@ -7,27 +7,27 @@
 ## 📸 Application Screenshots
 
 ### 🔑 1. Staff Login Screen
-![Staff Login Screen](docs/screenshots/login.png)
+![Staff Login Screen](https://raw.githubusercontent.com/harshvardhanghadge07/Disha-Typing-Institute-software-/main/docs/screenshots/login.png)
 
 ---
 
 ### 🏠 2. Institute Dashboard
-![Home Dashboard](docs/screenshots/home.png)
+![Home Dashboard](https://raw.githubusercontent.com/harshvardhanghadge07/Disha-Typing-Institute-software-/main/docs/screenshots/home.png)
 
 ---
 
 ### 👥 3. Student & Batch Management
-![Student & Batch Management](docs/screenshots/students.png)
+![Student & Batch Management](https://raw.githubusercontent.com/harshvardhanghadge07/Disha-Typing-Institute-software-/main/docs/screenshots/students.png)
 
 ---
 
 ### 💬 4. WhatsApp & Email Notifications
-![Notifications Screen](docs/screenshots/notifications.png)
+![Notifications Screen](https://raw.githubusercontent.com/harshvardhanghadge07/Disha-Typing-Institute-software-/main/docs/screenshots/notifications.png)
 
 ---
 
 ### 🔐 5. Secure Private Documents Vault
-![Private Documents Lock](docs/screenshots/documents.png)
+![Private Documents Lock](https://raw.githubusercontent.com/harshvardhanghadge07/Disha-Typing-Institute-software-/main/docs/screenshots/documents.png)
 
 ---
 
