@@ -1,2 +1,14 @@
-import {createRoot} from 'react-dom/client';import App from './App.jsx';import './styles.css';
+import {createRoot} from 'react-dom/client';
+import App from './App.jsx';
+import './styles.css';
+
 createRoot(document.getElementById('root')).render(<App/>);
+
+if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(err => {
+      console.log('PWA Service Worker registration skipped/failed:', err);
+    });
+  });
+}
+

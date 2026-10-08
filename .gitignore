@@ -24,3 +24,11 @@ yarn-error.log*
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Android Capacitor build artifacts
+frontend/android/app/build/
+frontend/android/.gradle/
+frontend/android/local.properties
+frontend/android/captures/
+frontend/android/.idea/
+

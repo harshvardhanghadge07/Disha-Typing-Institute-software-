@@ -115,6 +115,9 @@ async function createWindow() {
 
   // open external links in the system browser
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('blob:') || url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
+      return { action: 'allow' };
+    }
     shell.openExternal(url);
     return { action: 'deny' };
   });
