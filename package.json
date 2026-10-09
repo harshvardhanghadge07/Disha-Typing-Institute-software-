@@ -37,8 +37,7 @@
     "extraResources": [],
     "win": {
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ],
       "icon": "electron/assets/icon.ico",
       "requestedExecutionLevel": "asInvoker"

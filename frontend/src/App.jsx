@@ -1,5 +1,6 @@
 import {useState,useEffect,useCallback,lazy,Suspense,useRef} from 'react';
 const Scene=lazy(()=>import('./Scenes.jsx'));
+let TOKEN=sessionStorage.getItem('t')||'',DOC='';
 const getApiBaseUrl=()=>{
  const customUrl=localStorage.getItem('disha_api_url');
  if(customUrl)return customUrl.replace(/\/$/,'');
