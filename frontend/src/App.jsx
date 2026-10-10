@@ -1100,17 +1100,52 @@ export default function App() {
     </>
   );
 
-  const T = [['home', 'Home'], ['students', 'Students'], ['fees', 'Fees & Subjects'], ['notify', 'Fee Reminders'], ['backup', 'Cloud Backup'], ['docs', 'Private documents']];
+  const navTabs = [
+    { id: 'home', label: 'Home', short: 'Home', icon: '🏠' },
+    { id: 'students', label: 'Students', short: 'Students', icon: '👥' },
+    { id: 'fees', label: 'Fees & Rates', short: 'Fees', icon: '💰' },
+    { id: 'notify', label: 'Fee Reminders', short: 'Alerts', icon: '💬' },
+    { id: 'backup', label: 'Cloud Backup', short: 'Cloud', icon: '☁️' },
+    { id: 'docs', label: 'Private Documents', short: 'Vault', icon: '🔐' }
+  ];
+
   return (
     <div className="shell">
-      <nav>
+      {/* Mobile Top Header */}
+      <header className="mobile-top-header">
+        <div className="mobile-brand">
+          <span className="brand-title">DISHA</span>
+          <span className="brand-badge">TYPING INST.</span>
+        </div>
+        <div className="mobile-header-actions">
+          {deferredPrompt && (
+            <button type="button" className="btn-mobile-install" onClick={handleInstallPWA}>
+              📱 Install
+            </button>
+          )}
+          <button type="button" className="btn-mobile-settings" title="Server IP" onClick={() => setShowServerModal(true)}>
+            ⚙️ IP
+          </button>
+          <button type="button" className="ghost btn-mobile-logout" title="Log out" onClick={out}>
+            🚪 Logout
+          </button>
+        </div>
+      </header>
+
+      {/* Desktop Sidebar Navigation */}
+      <nav className="desktop-nav">
         <div className="brand">DISHA</div>
-        {T.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}
+        {navTabs.map(t => (
+          <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>
+            <span style={{marginRight:8}}>{t.icon}</span> {t.label}
+          </button>
+        ))}
         <div className="sp" />
         {deferredPrompt && <button type="button" className="btn-mobile-install" onClick={handleInstallPWA}>📱 Install App</button>}
         <button type="button" className="btn-mobile-settings" onClick={() => setShowServerModal(true)}>⚙️ Mobile Server IP</button>
         <button onClick={out}>Log out</button>
       </nav>
+
       <main>
         {deferredPrompt && (
           <div className="pwa-banner">
@@ -1126,6 +1161,22 @@ export default function App() {
         {tab === 'backup' && <CloudBackup userEmail={u?.email} reload={reload} />}
         {tab === 'docs' && <Docs students={students} batches={batches} />}
       </main>
+
+      {/* Mobile Bottom Tab Navigation */}
+      <nav className="mobile-bottom-nav">
+        {navTabs.map(t => (
+          <button 
+            key={t.id} 
+            type="button"
+            className={`mobile-tab-btn ${tab === t.id ? 'active' : ''}`} 
+            onClick={() => { setTab(t.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+          >
+            <span className="mobile-tab-icon">{t.icon}</span>
+            <span className="mobile-tab-label">{t.short}</span>
+          </button>
+        ))}
+      </nav>
+
       {showServerModal && <ServerConfigModal onClose={() => setShowServerModal(false)} />}
     </div>
   );
