@@ -4,9 +4,13 @@ let TOKEN=sessionStorage.getItem('t')||'',DOC='';
 const getApiBaseUrl=()=>{
  const customUrl=localStorage.getItem('disha_api_url');
  if(customUrl)return customUrl.replace(/\/$/,'');
- if(import.meta.env.VITE_API_URL)return import.meta.env.VITE_API_URL.replace(/\/$/,'');
- if(typeof window!=='undefined'&&(window.Capacitor||window.location.protocol==='capacitor:'||window.location.protocol==='file:')){
-  return (localStorage.getItem('disha_mobile_server_ip')||'http://192.168.1.100:5000').replace(/\/$/,'');
+ if(typeof window!=='undefined'&&window.location){
+  if(window.location.protocol==='http:'||window.location.protocol==='https:'){
+   return '';
+  }
+  if(window.Capacitor||window.location.protocol==='capacitor:'||window.location.protocol==='file:'){
+   return (localStorage.getItem('disha_mobile_server_ip')||'http://10.141.172.221:5000').replace(/\/$/,'');
+  }
  }
  return '';
 };
@@ -114,7 +118,7 @@ function ResetPassword({token}){const [p,setP]=useState(''),[p2,setP2]=useState(
   {!msg&&<button style={{width:'100%'}} disabled={loading}>{loading?'Saving…':'Set new password'}</button>}
  </form></div>}
 
-function Login({onIn}){const [e,setE]=useState(''),[p,setP]=useState(''),[err,setErr]=useState(''),[forgot,setForgot]=useState(false);
+function Login({onIn,onOpenServerModal}){const [e,setE]=useState(''),[p,setP]=useState(''),[err,setErr]=useState(''),[forgot,setForgot]=useState(false);
  const params=new URLSearchParams(window.location.search),resetToken=params.get('token');
  if(resetToken)return <ResetPassword token={resetToken}/>;
  if(forgot)return <ForgotPassword onBack={()=>setForgot(false)}/>;
@@ -123,7 +127,10 @@ function Login({onIn}){const [e,setE]=useState(''),[p,setP]=useState(''),[err,se
   <label>Email<input type="email" value={e} onChange={x=>setE(x.target.value)} required autoFocus/></label>
   <label>Password<input type="password" value={p} onChange={x=>setP(x.target.value)} required/></label>
   <div className="err" role="alert">{err}</div><button style={{width:'100%'}}>Log in</button>
-  <button type="button" className="ghost" style={{width:'100%',marginTop:8,fontSize:13}} onClick={()=>setForgot(true)}>Forgot password?</button>
+  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:8}}>
+   <button type="button" className="ghost" style={{fontSize:13}} onClick={()=>setForgot(true)}>Forgot password?</button>
+   {onOpenServerModal&&<button type="button" className="ghost" style={{fontSize:12,color:'var(--brass)'}} onClick={onOpenServerModal}>⚙️ Server IP</button>}
+  </div>
  </form></div>}
 
 function CloudRestoreBanner({cloudCheck, onRestore, onDismiss}){
@@ -1085,7 +1092,10 @@ export default function App() {
 
   if (!u) return (
     <>
-      <Login onIn={res => { setU({ email: res.email }); sessionStorage.setItem('email', res.email || ''); }} />
+      <Login 
+        onIn={res => { setU({ email: res.email }); sessionStorage.setItem('email', res.email || ''); }}
+        onOpenServerModal={() => setShowServerModal(true)}
+      />
       {showServerModal && <ServerConfigModal onClose={() => setShowServerModal(false)} />}
     </>
   );
