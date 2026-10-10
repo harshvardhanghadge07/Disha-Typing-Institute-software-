@@ -488,10 +488,11 @@ api.delete('/docs/:id',docAuth,wrap(async(q,r)=>{
 app.use('/api',api);
 const dist=path.join(__dir,'../frontend/dist');if(fs.existsSync(dist)){app.use(express.static(dist));app.get('*',(q,r)=>r.sendFile(path.join(dist,'index.html')))}
 await m.connect(process.env.MONGO_URI||'mongodb://127.0.0.1:27017/disha');
-const adminEmail=(process.env.ADMIN_EMAIL||'varmaganesh1010@gmail.com').toLowerCase();
-const adminPass=process.env.ADMIN_PASSWORD||'Itsvarmaganesh01';
-const adminHash=await bcrypt.hash(adminPass,12);
-await User.findOneAndUpdate({email:adminEmail},{email:adminEmail,hash:adminHash,role:'admin'},{upsert:true});
+if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+  const adminEmail = process.env.ADMIN_EMAIL.toLowerCase();
+  const adminHash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 12);
+  await User.findOneAndUpdate({email:adminEmail},{email:adminEmail,hash:adminHash,role:'admin'},{upsert:true});
+}
 if(!await Setting.findOne({key:'pin'}))await Setting.create({key:'pin',value:await bcrypt.hash(process.env.DOC_PIN||'123456',12)});
 if(!await Batch.countDocuments())await Batch.insertMany(['2026-06','2026-12','2027-06','2027-12'].map(d=>({start:d,name:new Date(d+'-01').toLocaleString('en',{month:'long',year:'numeric'})})));
 const srv = app.listen(process.env.PORT||5000,()=>console.log('DISHA running on :'+(process.env.PORT||5000)));
