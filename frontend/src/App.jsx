@@ -150,9 +150,23 @@ function CloudRestoreBanner({cloudCheck, onRestore, onDismiss}){
   </div>;
 }
 
-function Home({batches,students,cloudCheck,onRestoreCloud,onDismissBanner}){
+function Home({batches,students,reload,cloudCheck,onRestoreCloud,onDismissBanner}){
  const [searchQuery, setSearchQuery] = useState('');
  const pend=students.reduce((t,s)=>t+s.pending,0);
+
+ const deleteBatch = async (batchId, batchName, studentCount) => {
+   let msg = `Delete batch "${batchName}"?`;
+   if (studentCount > 0) {
+     msg += `\n\n⚠️ Note: ${studentCount} student(s) currently enrolled in this batch will be set to Unassigned (their records and fees will be preserved).`;
+   }
+   if (!confirm(msg)) return;
+   try {
+     await api('/batches/' + batchId, { method: 'DELETE' });
+     if (reload) await reload();
+   } catch (err) {
+     alert(err.message);
+   }
+ };
 
  const batchStats = batches.map(b => {
    const bStudents = students.filter(s => s.batch?._id === b._id);
@@ -234,6 +248,7 @@ function Home({batches,students,cloudCheck,onRestoreCloud,onDismissBanner}){
             <th>Collected Fees</th>
             <th>Pending Dues</th>
             <th>Collection Progress</th>
+            <th style={{textAlign:'center'}}>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -253,6 +268,19 @@ function Home({batches,students,cloudCheck,onRestoreCloud,onDismissBanner}){
                   <span style={{fontSize:12,color:'var(--mute)',width:36}}>{b.percent}%</span>
                 </div>
               </td>
+              <td style={{textAlign:'center'}}>
+                {b._id !== 'unassigned' && reload && (
+                  <button 
+                    type="button" 
+                    className="del" 
+                    style={{padding:'3px 8px',fontSize:12,cursor:'pointer'}} 
+                    title={`Delete batch "${b.name}"`}
+                    onClick={() => deleteBatch(b._id, b.name, b.totalStudents)}
+                  >
+                    🗑️ Delete
+                  </button>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -267,10 +295,29 @@ const blank={name:'',mobile:'',email:'',timing:'',subjects:[{name:'English',spee
 function Students({batches,fees,subjects=['English','Marathi','Hindi','GCC-TBC'],reload,students,mode}){
  const [b,setB]=useState(''),[q,setQ]=useState(''),[f,setF]=useState(null),[nb,setNb]=useState(''),[newSub,setNewSub]=useState('');
  const [feeInputs, setFeeInputs] = useState(fees || {30:7000, 40:5000, 50:5000, 3000:3000});
+ const [showBatchManager, setShowBatchManager] = useState(false);
 
  useEffect(() => {
    if (fees) setFeeInputs(fees);
  }, [fees]);
+
+ const deleteBatch = async (batchId, batchName) => {
+   const target = batches.find(x => x._id === batchId);
+   const name = batchName || target?.name || 'this batch';
+   const count = students.filter(s => s.batch?._id === batchId).length;
+   let msg = `Delete batch "${name}"?`;
+   if (count > 0) {
+     msg += `\n\n⚠️ Note: ${count} student(s) currently enrolled in this batch will be set to Unassigned (their records and fee data will remain intact).`;
+   }
+   if (!confirm(msg)) return;
+   try {
+     await api('/batches/' + batchId, { method: 'DELETE' });
+     if (b === batchId) setB('');
+     await reload();
+   } catch (err) {
+     alert(err.message);
+   }
+ };
 
  const list=students.filter(s=>(!b||s.batch?._id===b)&&(!q||[s.name,s.mobile,s.email].join(' ').toLowerCase().includes(q.toLowerCase())));
  const tot=f?f.subjects.reduce((t,s)=>t+(fees[s.speed] !== undefined ? Number(fees[s.speed]) : (s.speed == 3000 ? 3000 : 0)), 0):0;
@@ -344,24 +391,115 @@ function Students({batches,fees,subjects=['English','Marathi','Hindi','GCC-TBC']
         <button type="submit">+ Add Subject</button>
       </form>
     </div>
+
+    <div className="card" style={{marginBottom:20}}>
+      <h3 style={{fontSize:17,color:'var(--brass)',marginBottom:8}}>📅 Manage Institute Batches</h3>
+      <p style={{fontSize:13,color:'var(--mute)',margin:'0 0 12px'}}>Create new 6-month batches or remove obsolete batches. Students in deleted batches will safely become unassigned without losing records.</p>
+      <div className="chip-bar" style={{marginBottom:14}}>
+        {batches.map(x => {
+          const count = students.filter(s => s.batch?._id === x._id).length;
+          return (
+            <span key={x._id} className="chip-btn" style={{display:'inline-flex',alignItems:'center',gap:8,padding:'5px 12px',fontSize:13}}>
+              <span>{x.name} <small style={{opacity:0.75}}>({count} {count===1?'student':'students'})</small></span>
+              <button 
+                type="button" 
+                title={`Delete batch "${x.name}"`}
+                style={{background:'none',border:0,color:'var(--bad)',padding:'0 2px',cursor:'pointer',fontWeight:700,fontSize:14,lineHeight:1}} 
+                onClick={() => deleteBatch(x._id, x.name)}
+              >
+                ✕
+              </button>
+            </span>
+          );
+        })}
+        {!batches.length && <span style={{color:'var(--mute)',fontSize:13}}>No batches created yet.</span>}
+      </div>
+      <form onSubmit={async (e)=>{
+        e.preventDefault();
+        const d=new Date('1 '+nb);
+        if(isNaN(d))return alert('Use a format like June 2028');
+        try{
+          await api('/batches',{method:'POST',body:{name:nb,start:d.toISOString().slice(0,7)}});
+          setNb('');
+          reload();
+        }catch(x){alert(x.message)}
+      }} className="bar" style={{maxWidth:480,margin:0}}>
+        <input placeholder="New batch, e.g. June 2028" value={nb} onChange={e=>setNb(e.target.value)}/>
+        <button type="submit">+ Create Batch</button>
+      </form>
+    </div>
   </>}
 
-  <div className="bar">
-    <select value={b} onChange={e=>setB(e.target.value)}><option value="">All batches</option>{batches.map(x=><option key={x._id} value={x._id}>{x.name}</option>)}</select>
+  <div className="bar" style={{flexWrap:'wrap',gap:8}}>
+    <select value={b} onChange={e=>setB(e.target.value)}>
+      <option value="">All batches ({students.length})</option>
+      {batches.map(x=>{
+        const count = students.filter(s=>s.batch?._id===x._id).length;
+        return <option key={x._id} value={x._id}>{x.name} ({count})</option>;
+      })}
+    </select>
+    {b && (
+      <button 
+        type="button" 
+        className="del" 
+        style={{display:'inline-flex',alignItems:'center',gap:4}}
+        title="Delete currently selected batch" 
+        onClick={()=>deleteBatch(b)}
+      >
+        🗑️ Delete batch
+      </button>
+    )}
     <input placeholder="Search name, mobile or email" value={q} onChange={e=>setQ(e.target.value)}/>
     <button onClick={()=>setF({...blank,batch:b,subjects:[{name:subjects[0]||'English',speed:30}]})}>Add student</button>
   </div>
 
-  <div className="bar">
+  <div className="bar" style={{flexWrap:'wrap',gap:8}}>
     <input placeholder="New batch, e.g. June 2028" value={nb} onChange={e=>setNb(e.target.value)}/>
     <button className="ghost" onClick={async()=>{const d=new Date('1 '+nb);if(isNaN(d))return alert('Use a format like June 2028');await api('/batches',{method:'POST',body:{name:nb,start:d.toISOString().slice(0,7)}});setNb('');reload()}}>Create batch</button>
+    <button 
+      type="button" 
+      className="ghost" 
+      style={{marginLeft:'auto'}}
+      onClick={()=>setShowBatchManager(v=>!v)}
+    >
+      {showBatchManager ? '▲ Hide Batches' : `📅 Manage All Batches (${batches.length})`}
+    </button>
   </div>
+
+  {showBatchManager && (
+    <div className="card" style={{marginBottom:16,background:'rgba(16, 28, 34, 0.75)',borderColor:'rgba(212, 162, 76, 0.3)'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+        <h4 style={{margin:0,color:'var(--brass)',fontSize:15}}>📅 Institute Batches Registry ({batches.length})</h4>
+        <button type="button" className="ghost" style={{fontSize:12,padding:'2px 8px'}} onClick={()=>setShowBatchManager(false)}>✕ Close</button>
+      </div>
+      <p style={{fontSize:12,color:'var(--mute)',margin:'0 0 10px'}}>Click the ✕ next to any batch to delete it. Enrolled students will be moved to Unassigned safely.</p>
+      <div className="chip-bar" style={{margin:0}}>
+        {batches.map(x => {
+          const count = students.filter(s => s.batch?._id === x._id).length;
+          return (
+            <span key={x._id} className="chip-btn" style={{display:'inline-flex',alignItems:'center',gap:8,padding:'6px 12px',fontSize:13}}>
+              <span><b>{x.name}</b> <small style={{opacity:0.75}}>({count} {count===1?'student':'students'})</small></span>
+              <button 
+                type="button" 
+                title={`Delete batch "${x.name}"`}
+                style={{background:'none',border:0,color:'var(--bad)',padding:'0 2px',cursor:'pointer',fontWeight:700,fontSize:14,lineHeight:1}} 
+                onClick={() => deleteBatch(x._id, x.name)}
+              >
+                ✕
+              </button>
+            </span>
+          );
+        })}
+        {!batches.length && <span style={{color:'var(--mute)',fontSize:13}}>No batches created yet.</span>}
+      </div>
+    </div>
+  )}
 
   {f&&<div className="card">
     <h3>{f._id?'Edit student':'New student'}</h3>
     <div className="grid" style={{marginTop:14}}>
       {[['name','Full name'],['mobile','Mobile number'],['email','Email address'],['timing','Practice timing']].map(([k,l])=><label key={k}>{l}<input value={f[k]||''} onChange={e=>setF({...f,[k]:e.target.value})}/></label>)}
-      <label>Batch<select value={f.batch?._id||f.batch||b||batches[0]?._id} onChange={e=>setF({...f,batch:e.target.value})}>{batches.map(x=><option key={x._id} value={x._id}>{x.name}</option>)}</select></label>
+      <label>Batch<select value={f.batch?._id||f.batch||''} onChange={e=>setF({...f,batch:e.target.value})}><option value="">-- No batch (Unassigned) --</option>{batches.map(x=><option key={x._id} value={x._id}>{x.name}</option>)}</select></label>
       <label>Fees paid (₹)<input type="number" min="0" value={f.paid} onChange={e=>setF({...f,paid:e.target.value})}/></label>
     </div>
 
@@ -402,7 +540,7 @@ function Students({batches,fees,subjects=['English','Marathi','Hindi','GCC-TBC']
   <div className="tw"><table><thead><tr><th>Name</th><th>Batch</th><th>Timing</th><th>Subjects & Option</th><th>Total</th><th>Paid</th><th>Pending</th><th></th></tr></thead><tbody>
    {list.map(s=><tr key={s._id}>
      <td>{s.name}<br/><small>{s.mobile}</small></td>
-     <td>{s.batch?.name}</td>
+     <td>{s.batch?.name || <em style={{color:'var(--mute)'}}>Unassigned</em>}</td>
      <td>{s.timing}</td>
      <td>{s.subjects.map(x=>x.name+' '+(['30','40','50'].includes(String(x.speed))?x.speed+' WPM':ru(x.speed))).join(', ')}</td>
      <td>{ru(s.total)}</td>
@@ -1155,7 +1293,7 @@ export default function App() {
             <button className="btn-mobile-install" onClick={handleInstallPWA}>Install Now</button>
           </div>
         )}
-        {tab === 'home' && <Home batches={batches} students={students} cloudCheck={cloudCheck} onRestoreCloud={handleRestoreFromCloud} onDismissBanner={() => setCloudCheck(null)} />}
+        {tab === 'home' && <Home batches={batches} students={students} reload={reload} cloudCheck={cloudCheck} onRestoreCloud={handleRestoreFromCloud} onDismissBanner={() => setCloudCheck(null)} />}
         {(tab === 'students' || tab === 'fees') && <Students key={tab} mode={tab} {...{ batches, fees, subjects, reload, students }} />}
         {tab === 'notify' && <Notify batches={batches} students={students} />}
         {tab === 'backup' && <CloudBackup userEmail={u?.email} reload={reload} />}

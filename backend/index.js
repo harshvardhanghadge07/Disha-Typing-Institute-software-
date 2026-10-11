@@ -178,6 +178,15 @@ api.post('/batches',wrap(async(q,r)=>{
   autoBackupTrigger(q.user.id, q.user.email);
   r.json(res);
 }));
+api.delete('/batches/:id',wrap(async(q,r)=>{
+  const b = await Batch.findById(q.params.id);
+  if (!b) return r.status(404).json({error:'Batch not found.'});
+  await Student.updateMany({batch:q.params.id},{$unset:{batch:1}});
+  await Doc.updateMany({batch:q.params.id},{$unset:{batch:1}});
+  await Batch.findByIdAndDelete(q.params.id);
+  autoBackupTrigger(q.user.id, q.user.email);
+  r.json({ok:true,deletedId:q.params.id});
+}));
 
 api.get('/fees',wrap(async(q,r)=>r.json(await rules())));
 api.put('/fees',wrap(async(q,r)=>{
@@ -212,13 +221,19 @@ api.get('/students',wrap(async(q,r)=>{const f={};if(q.query.batch)f.batch=q.quer
  r.json((await Student.find(f).populate('batch').sort({name:1})).map(withPending))}));
 
 api.post('/students',wrap(async(q,r)=>{
- const b=q.body;const s=await Student.create({...b,total:total(b.subjects,await rules())});
+ const b={...q.body};
+ if(!b.batch) delete b.batch;
+ const s=await Student.create({...b,total:total(b.subjects,await rules())});
  autoBackupTrigger(q.user.id, q.user.email);
  r.json(withPending(s));
 }));
 
 api.put('/students/:id',wrap(async(q,r)=>{
- const b=q.body,s=await Student.findByIdAndUpdate(q.params.id,{...b,total:total(b.subjects,await rules())},{new:true});
+ const b={...q.body};
+ const updateData={...b,total:total(b.subjects,await rules())};
+ const updateOp=b.batch?{$set:updateData}:{$set:updateData,$unset:{batch:1}};
+ if(!b.batch) delete updateData.batch;
+ const s=await Student.findByIdAndUpdate(q.params.id,updateOp,{new:true});
  autoBackupTrigger(q.user.id, q.user.email);
  r.json(withPending(s));
 }));
