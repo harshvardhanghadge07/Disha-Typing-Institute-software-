@@ -8,8 +8,12 @@ const m=mongoose,M=(n,s)=>m.model(n,new m.Schema(s,{timestamps:true}));
 const User=M('User',{email:{type:String,unique:true},hash:String,role:{type:String,default:'staff'}});
 const Batch=M('Batch',{name:{type:String,unique:true},start:String});
 const Setting=M('Setting',{key:{type:String,unique:true},value:m.Schema.Types.Mixed});
-const Student=M('Student',{name:String,mobile:String,email:String,timing:String,batch:{type:m.Schema.Types.ObjectId,ref:'Batch'},
- subjects:[{name:String,speed:Number}],paid:{type:Number,default:0},total:Number});
+const Student=M('Student',{
+  name:String,mobile:String,email:String,timing:String,computer:String,batch:{type:m.Schema.Types.ObjectId,ref:'Batch'},
+  subjects:[{name:String,speed:Number}],paid:{type:Number,default:0},total:Number,
+  payments:[{amount:Number,date:String,note:String,createdAt:{type:Date,default:Date.now}}],
+  grNo:String,motherName:String,gender:String,dob:String,admissionDate:String,qualification:String,address:String,aadharNo:String,photo:String
+});
 const Doc=M('Doc',{kind:{type:String,enum:['results','certificates']},student:{type:m.Schema.Types.ObjectId,ref:'Student'},batch:{type:m.Schema.Types.ObjectId,ref:'Batch'},original:String,file:String});
 const Backup=M('Backup',{user:{type:m.Schema.Types.ObjectId,ref:'User'},userEmail:String,label:String,totalStudents:Number,totalBatches:Number,totalDocs:Number,payload:String});
 
@@ -22,7 +26,15 @@ const total=(subs,r)=>(subs||[]).reduce((t,s)=>{
   if(k == 3000) return t + 3000;
   return t + (Number(r[k]) || 0);
 },0);
-const withPending=s=>({...s.toObject(),pending:(s.total||0)-(s.paid||0)});
+const withPending=s=>{
+  const o = typeof s?.toObject === 'function' ? s.toObject() : {...s};
+  let paid = Number(o.paid) || 0;
+  if (Array.isArray(o.payments) && o.payments.length > 0) {
+    paid = o.payments.reduce((sum, p) => sum + (Number(p?.amount) || 0), 0);
+  }
+  const pending = (Number(o.total) || 0) - paid;
+  return { ...o, paid, pending };
+};
 const wrap=f=>(q,r,n)=>Promise.resolve(f(q,r,n)).catch(e=>r.status(400).json({error:e.message}));
 const auth=(q,r,n)=>{try{q.user=jwt.verify((q.headers.authorization||'').slice(7),S);if(q.user.doc)throw 0;n()}catch{r.status(401).json({error:'Please log in again.'})}};
 const docAuth=(q,r,n)=>{try{if(jwt.verify(q.headers['x-doc-token']||'',S).doc!==q.user.id)throw 0;n()}catch{r.status(403).json({error:'Enter the documents PIN.'})}};
@@ -114,7 +126,7 @@ const upload=multer({storage:multer.diskStorage({destination:UP,filename:(q,f,cb
  limits:{fileSize:10e6},fileFilter:(q,f,cb)=>cb(f.mimetype==='application/pdf'?null:new Error('Only PDF files are allowed'),f.mimetype==='application/pdf')});
 const api=express.Router();
 
-api.post('/login',rateLimit({windowMs:15*60e3,max:20}),wrap(async(q,r)=>{const u=await User.findOne({email:String(q.body.email).toLowerCase()});
+api.post('/login',rateLimit({windowMs:15*60e3,max:100,message:{error:'Too many login attempts. Please wait a few minutes.'}}),wrap(async(q,r)=>{const u=await User.findOne({email:String(q.body.email).toLowerCase()});
  if(!u||!await bcrypt.compare(String(q.body.password),u.hash))return r.status(401).json({error:'Wrong email or password.'});
  r.json({token:jwt.sign({id:String(u._id),role:u.role,email:u.email},S,{expiresIn:'2h'}),email:u.email,role:u.role})}));
 
@@ -217,12 +229,17 @@ api.delete('/subjects/:name',wrap(async(q,r)=>{
 }));
 
 api.get('/students',wrap(async(q,r)=>{const f={};if(q.query.batch)f.batch=q.query.batch;
- if(q.query.q){const x=new RegExp(String(q.query.q).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i');f.$or=[{name:x},{mobile:x},{email:x}]}
+ if(q.query.q){const x=new RegExp(String(q.query.q).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i');f.$or=[{name:x},{mobile:x},{email:x},{grNo:x},{aadharNo:x},{computer:x},{motherName:x}]}
  r.json((await Student.find(f).populate('batch').sort({name:1})).map(withPending))}));
 
 api.post('/students',wrap(async(q,r)=>{
  const b={...q.body};
  if(!b.batch) delete b.batch;
+ if (Array.isArray(b.payments) && b.payments.length > 0) {
+   b.paid = b.payments.reduce((sum, p) => sum + (Number(p?.amount) || 0), 0);
+ } else if (Number(b.paid) > 0) {
+   b.payments = [{ amount: Number(b.paid), date: b.admissionDate || new Date().toISOString().slice(0, 10), note: 'Initial payment' }];
+ }
  const s=await Student.create({...b,total:total(b.subjects,await rules())});
  autoBackupTrigger(q.user.id, q.user.email);
  r.json(withPending(s));
@@ -230,11 +247,46 @@ api.post('/students',wrap(async(q,r)=>{
 
 api.put('/students/:id',wrap(async(q,r)=>{
  const b={...q.body};
+ if (Array.isArray(b.payments) && b.payments.length > 0) {
+   b.paid = b.payments.reduce((sum, p) => sum + (Number(p?.amount) || 0), 0);
+ } else if (Number(b.paid) > 0 && (!b.payments || b.payments.length === 0)) {
+   b.payments = [{ amount: Number(b.paid), date: new Date().toISOString().slice(0, 10), note: 'Payment' }];
+ }
  const updateData={...b,total:total(b.subjects,await rules())};
  const updateOp=b.batch?{$set:updateData}:{$set:updateData,$unset:{batch:1}};
  if(!b.batch) delete updateData.batch;
  const s=await Student.findByIdAndUpdate(q.params.id,updateOp,{new:true});
  autoBackupTrigger(q.user.id, q.user.email);
+ r.json(withPending(s));
+}));
+
+api.post('/students/:id/payments',wrap(async(q,r)=>{
+ const numAmt = Number(q.body.amount);
+ if (!numAmt || isNaN(numAmt) || numAmt <= 0) return r.status(400).json({error:'Please enter a valid payment amount.'});
+ const s = await Student.findById(q.params.id);
+ if (!s) return r.status(404).json({error:'Student not found.'});
+ if (!Array.isArray(s.payments)) s.payments = [];
+ s.payments.push({
+   amount: numAmt,
+   date: q.body.date || new Date().toISOString().slice(0, 10),
+   note: String(q.body.note || '').trim()
+ });
+ s.paid = s.payments.reduce((sum, p) => sum + (Number(p?.amount) || 0), 0);
+ await s.save();
+ autoBackupTrigger(q.user.id, q.user.email);
+ r.json(withPending(s));
+}));
+
+api.delete('/students/:id/payments/:idx',wrap(async(q,r)=>{
+ const s = await Student.findById(q.params.id);
+ if (!s) return r.status(404).json({error:'Student not found.'});
+ const idx = Number(q.params.idx);
+ if (Array.isArray(s.payments) && idx >= 0 && idx < s.payments.length) {
+   s.payments.splice(idx, 1);
+   s.paid = s.payments.reduce((sum, p) => sum + (Number(p?.amount) || 0), 0);
+   await s.save();
+   autoBackupTrigger(q.user.id, q.user.email);
+ }
  r.json(withPending(s));
 }));
 
@@ -510,7 +562,7 @@ if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
 }
 if(!await Setting.findOne({key:'pin'}))await Setting.create({key:'pin',value:await bcrypt.hash(process.env.DOC_PIN||'123456',12)});
 if(!await Batch.countDocuments())await Batch.insertMany(['2026-06','2026-12','2027-06','2027-12'].map(d=>({start:d,name:new Date(d+'-01').toLocaleString('en',{month:'long',year:'numeric'})})));
-const srv = app.listen(process.env.PORT||5000,()=>console.log('DISHA running on :'+(process.env.PORT||5000)));
+const srv = app.listen(process.env.PORT||5000, '0.0.0.0', ()=>console.log('DISHA running on :'+(process.env.PORT||5000)));
 srv.on('error', err => {
   if (err.code === 'EADDRINUSE') console.log('Port ' + (process.env.PORT||5000) + ' is already active.');
   else console.error(err);

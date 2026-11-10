@@ -18,10 +18,25 @@ const api=async(p,o={})=>{
  const h={Authorization:'Bearer '+TOKEN,'x-doc-token':DOC};
  if(!(o.body instanceof FormData)&&o.body){h['Content-Type']='application/json';o.body=JSON.stringify(o.body)}
  const baseUrl=getApiBaseUrl();
- const r=await fetch(baseUrl+'/api'+p,{...o,headers:h});
+ let r;
+ try {
+   r = await fetch(baseUrl + '/api' + p, { ...o, headers: h });
+ } catch (err) {
+   if (!baseUrl) {
+     try {
+       r = await fetch('http://127.0.0.1:5000/api' + p, { ...o, headers: h });
+     } catch {
+       throw new Error('Could not connect to DISHA backend server. Please verify port 5000 is running.');
+     }
+   } else {
+     throw new Error(`Connection to ${baseUrl} failed: ${err.message}`);
+   }
+ }
  if(o.blob&&r.ok)return r.blob();
- const j=await r.json().catch(()=>({}));
- if(!r.ok)throw new Error(j.error||'Something went wrong.');
+ const text = await r.text();
+ let j = {};
+ try { j = JSON.parse(text); } catch { j = { error: text }; }
+ if(!r.ok) throw new Error(j.error || j.message || `Request failed with status ${r.status}`);
  return j;
 };
 
@@ -291,264 +306,1427 @@ function Home({batches,students,reload,cloudCheck,onRestoreCloud,onDismissBanner
  </>;
 }
 
-const blank={name:'',mobile:'',email:'',timing:'',subjects:[{name:'English',speed:30}],paid:0};
-function Students({batches,fees,subjects=['English','Marathi','Hindi','GCC-TBC'],reload,students,mode}){
- const [b,setB]=useState(''),[q,setQ]=useState(''),[f,setF]=useState(null),[nb,setNb]=useState(''),[newSub,setNewSub]=useState('');
- const [feeInputs, setFeeInputs] = useState(fees || {30:7000, 40:5000, 50:5000, 3000:3000});
- const [showBatchManager, setShowBatchManager] = useState(false);
+const COMPUTERS = ['User2', 'User3', 'User4', 'User5', 'User6', 'User7'];
 
- useEffect(() => {
-   if (fees) setFeeInputs(fees);
- }, [fees]);
+const TIME_SLOTS = [
+  '6:00 AM – 7:00 AM',
+  '7:00 AM – 8:00 AM',
+  '8:00 AM – 9:00 AM',
+  '9:00 AM – 10:00 AM',
+  '10:00 AM – 11:00 AM',
+  '11:00 AM – 12:00 PM',
+  '12:00 PM – 1:00 PM',
+  '1:00 PM – 2:00 PM',
+  '2:00 PM – 3:00 PM',
+  '3:00 PM – 4:00 PM',
+  '4:00 PM – 5:00 PM',
+  '5:00 PM – 6:00 PM',
+  '6:00 PM – 7:00 PM',
+  '7:00 PM – 8:00 PM',
+  '8:00 PM – 9:00 PM',
+  '9:00 PM – 10:00 PM'
+];
 
- const deleteBatch = async (batchId, batchName) => {
-   const target = batches.find(x => x._id === batchId);
-   const name = batchName || target?.name || 'this batch';
-   const count = students.filter(s => s.batch?._id === batchId).length;
-   let msg = `Delete batch "${name}"?`;
-   if (count > 0) {
-     msg += `\n\n⚠️ Note: ${count} student(s) currently enrolled in this batch will be set to Unassigned (their records and fee data will remain intact).`;
-   }
-   if (!confirm(msg)) return;
-   try {
-     await api('/batches/' + batchId, { method: 'DELETE' });
-     if (b === batchId) setB('');
-     await reload();
-   } catch (err) {
-     alert(err.message);
-   }
- };
+const formatShortDate = (d) => {
+  if (!d) return '';
+  const parts = String(d).split('T')[0].split('-');
+  if (parts.length === 3) {
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const y = parts[0];
+    const m = parseInt(parts[1], 10) - 1;
+    const day = parts[2];
+    if (m >= 0 && m < 12) return `${day} ${months[m]} ${y.slice(-2)}`;
+  }
+  return String(d).slice(0, 10);
+};
 
- const list=students.filter(s=>(!b||s.batch?._id===b)&&(!q||[s.name,s.mobile,s.email].join(' ').toLowerCase().includes(q.toLowerCase())));
- const tot=f?f.subjects.reduce((t,s)=>t+(fees[s.speed] !== undefined ? Number(fees[s.speed]) : (s.speed == 3000 ? 3000 : 0)), 0):0;
- const save=async()=>{try{const body={...f,batch:f.batch||b||batches[0]?._id,paid:+f.paid};f._id?await api('/students/'+f._id,{method:'PUT',body}):await api('/students',{method:'POST',body});setF(null);reload()}catch(x){alert(x.message)}};
- const sub=(i,k,v)=>setF({...f,subjects:f.subjects.map((s,j)=>j===i?{...s,[k]:k==='speed'?+v:v}:s)});
+const matchTimingSlot = (studentTiming, slot) => {
+  if (!studentTiming || !slot) return false;
+  const clean = s => s.toLowerCase().replace(/\s+/g, '').replace(/–/g, '-');
+  const st = clean(studentTiming);
+  const sl = clean(slot);
+  if (st === sl) return true;
+  const noZeros = s => s.replace(/:00/g, '');
+  return noZeros(st) === noZeros(sl);
+};
 
- const handleAddSubject = async (e) => {
-   e?.preventDefault();
-   if (!newSub.trim()) return alert('Please enter a subject name');
-   try {
-     await api('/subjects', { method: 'POST', body: { name: newSub.trim() } });
-     setNewSub('');
-     await reload();
-   } catch (x) { alert(x.message); }
- };
+const matchComputer = (studentComp, comp) => {
+  if (!studentComp || !comp) return false;
+  return studentComp.trim().toLowerCase() === comp.trim().toLowerCase();
+};
 
- const handleDeleteSubject = async (name) => {
-   if (!confirm(`Remove subject "${name}" from institute registry?`)) return;
-   try {
-     await api('/subjects/' + encodeURIComponent(name), { method: 'DELETE' });
-     await reload();
-   } catch (x) { alert(x.message); }
- };
+const handlePhotoSelect = (file, callback) => {
+  if (!file) return;
+  if (!file.type.startsWith('image/')) return alert('Please select a valid image file (JPG, PNG, WebP)');
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const maxW = 350;
+      const maxH = 450;
+      let width = img.width;
+      let height = img.height;
+      if (width > maxW || height > maxH) {
+        if (width / height > maxW / maxH) {
+          width = maxW;
+          height = Math.round((img.height * maxW) / img.width);
+        } else {
+          height = maxH;
+          width = Math.round((img.width * maxH) / img.height);
+        }
+      }
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      callback(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+};
 
- const handleSaveFees = async () => {
-   try {
-     await api('/fees', { method: 'PUT', body: feeInputs });
-     alert('Institute Fee Rules updated successfully!');
-     await reload();
-   } catch (x) {
-     alert('Failed to save fees: ' + x.message);
-   }
- };
-
- // Available fee options ensuring 30, 40, 50, 3000 are present
- const feeOptionsList = { ...fees, 3000: fees[3000] || 3000 };
-
- return <>
-  <h2>{mode==='fees'?'Fees & Subject Management':'Students'}</h2>
-
-  {mode==='fees' && <>
-    <div className="card" style={{marginBottom:20}}>
-      <h3 style={{fontSize:17,color:'var(--brass)',marginBottom:8}}>💰 Manage Institute Fee Structure & Rates</h3>
-      <p style={{fontSize:13,color:'var(--mute)',margin:'0 0 12px'}}>Set standard course fee rates for typing speed levels and flat fee options (e.g. ₹3,000).</p>
-      <div className="grid" style={{marginBottom:14}}>
-        {Object.entries(feeInputs).map(([k, v]) => (
-          <label key={k}>
-            {['30','40','50'].includes(String(k)) ? `${k} WPM Fee (₹)` : `Fee Option ₹${k} (₹)`}
-            <input
-              type="number"
-              min="0"
-              value={v}
-              onChange={e => setFeeInputs({ ...feeInputs, [k]: Number(e.target.value) })}
-            />
-          </label>
+function PaymentBoxes({ payments, paid }) {
+  if (Array.isArray(payments) && payments.length > 0) {
+    return (
+      <div className="payment-box-list">
+        {payments.map((p, idx) => (
+          <div key={idx} className="payment-box" title={p.note ? `${p.note} (${formatShortDate(p.date)})` : `Payment #${idx+1} (${formatShortDate(p.date)})`}>
+            <span className="p-amt">{ru(p.amount)}</span>
+            <span className="p-date">{formatShortDate(p.date)}</span>
+          </div>
         ))}
       </div>
-      <button onClick={handleSaveFees}>💾 Save Fee Rates</button>
-    </div>
-
-    <div className="card" style={{marginBottom:20}}>
-      <h3 style={{fontSize:17,color:'var(--brass)',marginBottom:8}}>📚 Manage Institute Typing Subjects</h3>
-      <p style={{fontSize:13,color:'var(--mute)',margin:'0 0 12px'}}>Add custom subjects (e.g. English, Marathi, Hindi, GCC-TBC, Shorthand) to offer at your institute.</p>
-      <div className="chip-bar" style={{marginBottom:14}}>
-        {subjects.map(s => <span key={s} className="chip-btn" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'4px 10px',fontSize:13}}>
-          {s} <button type="button" style={{background:'none',border:0,color:'var(--bad)',padding:0,cursor:'pointer',fontWeight:700}} onClick={()=>handleDeleteSubject(s)}>✕</button>
-        </span>)}
+    );
+  }
+  if (Number(paid) > 0) {
+    return (
+      <div className="payment-box-list">
+        <div className="payment-box" title="Initial Recorded Payment">
+          <span className="p-amt">{ru(paid)}</span>
+          <span className="p-date">Paid</span>
+        </div>
       </div>
-      <form onSubmit={handleAddSubject} className="bar" style={{maxWidth:480,margin:0}}>
-        <input placeholder="New subject name (e.g. Hindi, GCC-TBC)" value={newSub} onChange={e=>setNewSub(e.target.value)}/>
-        <button type="submit">+ Add Subject</button>
-      </form>
-    </div>
+    );
+  }
+  return <span style={{ fontSize: 12, color: 'var(--mute)' }}>₹0 paid</span>;
+}
 
-    <div className="card" style={{marginBottom:20}}>
-      <h3 style={{fontSize:17,color:'var(--brass)',marginBottom:8}}>📅 Manage Institute Batches</h3>
-      <p style={{fontSize:13,color:'var(--mute)',margin:'0 0 12px'}}>Create new 6-month batches or remove obsolete batches. Students in deleted batches will safely become unassigned without losing records.</p>
-      <div className="chip-bar" style={{marginBottom:14}}>
-        {batches.map(x => {
-          const count = students.filter(s => s.batch?._id === x._id).length;
-          return (
-            <span key={x._id} className="chip-btn" style={{display:'inline-flex',alignItems:'center',gap:8,padding:'5px 12px',fontSize:13}}>
-              <span>{x.name} <small style={{opacity:0.75}}>({count} {count===1?'student':'students'})</small></span>
-              <button 
-                type="button" 
-                title={`Delete batch "${x.name}"`}
-                style={{background:'none',border:0,color:'var(--bad)',padding:'0 2px',cursor:'pointer',fontWeight:700,fontSize:14,lineHeight:1}} 
-                onClick={() => deleteBatch(x._id, x.name)}
-              >
-                ✕
-              </button>
-            </span>
-          );
-        })}
-        {!batches.length && <span style={{color:'var(--mute)',fontSize:13}}>No batches created yet.</span>}
+function PaymentModal({ student, onClose, reload }) {
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [currentStudent, setCurrentStudent] = useState(student);
+
+  const totalFee = currentStudent.total || 0;
+  const paidFee = currentStudent.paid || 0;
+  const pendingFee = (currentStudent.pending !== undefined) ? currentStudent.pending : (totalFee - paidFee);
+
+  const handleAddPayment = async (e) => {
+    e?.preventDefault();
+    const num = Number(amount);
+    if (!num || isNaN(num) || num <= 0) return alert('Please enter a valid payment amount.');
+    setBusy(true);
+    try {
+      const updated = await api(`/students/${currentStudent._id}/payments`, {
+        method: 'POST',
+        body: { amount: num, date, note }
+      });
+      setCurrentStudent(updated);
+      setAmount('');
+      setNote('');
+      await reload();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeletePayment = async (idx) => {
+    if (!confirm('Delete this recorded payment?')) return;
+    setBusy(true);
+    try {
+      const updated = await api(`/students/${currentStudent._id}/payments/${idx}`, {
+        method: 'DELETE'
+      });
+      setCurrentStudent(updated);
+      await reload();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 1000, padding: 16
+    }}>
+      <div className="card" style={{ maxWidth: 520, width: '100%', maxHeight: '92vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <h3 style={{ margin: 0, color: 'var(--brass)', fontSize: 18 }}>💳 Record Fee Payment</h3>
+          <button type="button" className="ghost" style={{ padding: '4px 10px' }} onClick={onClose}>✕</button>
+        </div>
+
+        <div style={{ background: 'rgba(212, 162, 76, 0.08)', border: '1px solid var(--line)', borderRadius: 8, padding: '12px 14px', marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, fontSize: 16, color: '#fff', marginBottom: 6 }}>{currentStudent.name}</div>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 13 }}>
+            <span>Total Fee: <b>{ru(totalFee)}</b></span>
+            <span>Total Paid: <b style={{ color: 'var(--teal)' }}>{ru(paidFee)}</b></span>
+            <span>Pending Balance: <b className={pendingFee > 0 ? 'pend' : 'clear'}>{ru(pendingFee)}</b></span>
+          </div>
+        </div>
+
+        <h4 style={{ margin: '0 0 8px', color: 'var(--text)', fontSize: 14 }}>Recorded Payment Installments:</h4>
+        <div style={{ background: '#0c1519', border: '1px solid var(--line)', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+          {Array.isArray(currentStudent.payments) && currentStudent.payments.length > 0 ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+              {currentStudent.payments.map((p, idx) => (
+                <div key={idx} style={{
+                  background: 'rgba(212, 162, 76, 0.12)', border: '1px solid var(--brass)',
+                  borderRadius: 8, padding: '6px 14px', display: 'inline-flex', flexDirection: 'column',
+                  alignItems: 'center', position: 'relative'
+                }}>
+                  <button
+                    type="button"
+                    title="Remove this payment"
+                    disabled={busy}
+                    onClick={() => handleDeletePayment(idx)}
+                    style={{
+                      position: 'absolute', top: -6, right: -6, width: 18, height: 18,
+                      borderRadius: '50%', background: 'var(--bad)', color: '#fff',
+                      border: 0, padding: 0, fontSize: 10, display: 'flex', alignItems: 'center',
+                      justifyContent: 'center', cursor: 'pointer'
+                    }}
+                  >✕</button>
+                  <span style={{ fontWeight: 700, color: 'var(--brass)', fontSize: 14 }}>{ru(p.amount)}</span>
+                  <span style={{ fontSize: 11, color: 'var(--mute)' }}>{formatShortDate(p.date)}</span>
+                  {p.note && <span style={{ fontSize: 10, color: 'var(--text)', opacity: 0.85, marginTop: 2 }}>{p.note}</span>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ color: 'var(--mute)', fontSize: 13 }}>No installment payments recorded yet.</div>
+          )}
+        </div>
+
+        <form onSubmit={handleAddPayment} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <h4 style={{ margin: 0, color: 'var(--brass)', fontSize: 14 }}>+ Add New Payment Installment:</h4>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))' }}>
+            <label>Payment Amount (₹)*
+              <input
+                type="number"
+                min="1"
+                placeholder="e.g. 2000"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                required
+                autoFocus
+              />
+            </label>
+            <label>Payment Date*
+              <input
+                type="date"
+                value={date}
+                onChange={e => setDate(e.target.value)}
+                required
+              />
+            </label>
+            <label>Payment Mode / Note
+              <input
+                type="text"
+                placeholder="Cash, GPay, UPI..."
+                value={note}
+                onChange={e => setNote(e.target.value)}
+              />
+            </label>
+          </div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+            <button type="button" className="ghost" onClick={onClose} disabled={busy}>Close</button>
+            <button type="submit" disabled={busy || !amount}>{busy ? 'Recording…' : '✓ Record Payment'}</button>
+          </div>
+        </form>
       </div>
-      <form onSubmit={async (e)=>{
-        e.preventDefault();
-        const d=new Date('1 '+nb);
-        if(isNaN(d))return alert('Use a format like June 2028');
-        try{
-          await api('/batches',{method:'POST',body:{name:nb,start:d.toISOString().slice(0,7)}});
+    </div>
+  );
+}
+
+function StudentProfileModal({ student, onClose, onEdit }) {
+  if (!student) return null;
+  const printProfile = () => {
+    window.print();
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 1000, padding: 16
+    }}>
+      <div className="card" style={{ maxWidth: 680, width: '100%', maxHeight: '92vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--line)', paddingBottom: 10, marginBottom: 16 }}>
+          <div>
+            <h3 style={{ margin: 0, color: 'var(--brass)', fontSize: 18 }}>MAHARASHTRA STATE COUNCIL OF EXAMINATION</h3>
+            <small style={{ color: 'var(--mute)' }}>G.C.C.C.T. EXAMINATION — Student Admission Record</small>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="ghost" style={{ padding: '4px 10px', fontSize: 13 }} onClick={printProfile}>🖨️ Print Form</button>
+            <button type="button" className="ghost" style={{ padding: '4px 10px' }} onClick={onClose}>✕</button>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start', marginBottom: 16 }}>
+          <div style={{ flex: 1, minWidth: 260 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 14px', fontSize: 14 }}>
+              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>1. General Register No:</span>
+              <span>{student.grNo || '—'}</span>
+
+              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>3. Student Name:</span>
+              <span style={{ fontWeight: 700, color: '#fff' }}>{student.name}</span>
+
+              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>4. Mother's Name:</span>
+              <span>{student.motherName || '—'}</span>
+
+              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>5. Subject(s):</span>
+              <span>{student.subjects?.map(s => `${s.name} (${s.speed} WPM)`).join(', ') || '—'}</span>
+
+              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>7. Gender:</span>
+              <span>{student.gender || '—'}</span>
+
+              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>8. Date of Birth:</span>
+              <span>{student.dob ? formatShortDate(student.dob) : '—'}</span>
+
+              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>9. Date of Admission:</span>
+              <span>{student.admissionDate ? formatShortDate(student.admissionDate) : '—'}</span>
+
+              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>13. Qualification:</span>
+              <span>{student.qualification || '—'}</span>
+
+              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>14. Address:</span>
+              <span>{student.address || '—'}</span>
+
+              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>15. Mobile Number:</span>
+              <span>{student.mobile || '—'}</span>
+
+              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>16. Aadhaar Number:</span>
+              <span style={{ letterSpacing: 1, fontWeight: 600 }}>{student.aadharNo || '—'}</span>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div style={{
+              width: 120, height: 150, border: '2px solid var(--brass)', borderRadius: 8,
+              overflow: 'hidden', background: '#0c1519', display: 'flex', alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              {student.photo ? (
+                <img src={student.photo} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <div style={{ textAlign: 'center', color: 'var(--mute)', fontSize: 12, padding: 8 }}>
+                  <span style={{ fontSize: 32, display: 'block', marginBottom: 4 }}>👤</span>
+                  Passport Size Photo
+                </div>
+              )}
+            </div>
+            <small style={{ color: 'var(--mute)', marginTop: 6 }}>Passport Photo</small>
+          </div>
+        </div>
+
+        <div className="card" style={{ background: 'rgba(15, 27, 34, 0.6)', border: '1px solid var(--line)', margin: '14px 0' }}>
+          <h4 style={{ margin: '0 0 10px', color: 'var(--brass)', fontSize: 15 }}>💻 Practice Timing & Computer Allocation</h4>
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 14 }}>
+            <div>Computer: <b style={{ color: 'var(--brass)' }}>{student.computer || 'Not Assigned'}</b></div>
+            <div>Practice Timing: <b>{student.timing || 'Not Assigned'}</b></div>
+            <div>Batch: <b>{student.batch?.name || 'Unassigned'}</b></div>
+          </div>
+        </div>
+
+        <div className="card" style={{ background: 'rgba(15, 27, 34, 0.6)', border: '1px solid var(--line)', margin: '14px 0' }}>
+          <h4 style={{ margin: '0 0 10px', color: 'var(--brass)', fontSize: 15 }}>💰 Fee Payments Breakdown</h4>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 12, fontSize: 14 }}>
+            <span>Total Fee: <b>{ru(student.total)}</b></span>
+            <span>Total Paid: <b style={{ color: 'var(--teal)' }}>{ru(student.paid)}</b></span>
+            <span>Pending Balance: <b className={(student.pending || 0) > 0 ? 'pend' : 'clear'}>{ru(student.pending || 0)}</b></span>
+          </div>
+          <div>
+            <span style={{ fontSize: 12, color: 'var(--mute)', display: 'block', marginBottom: 6 }}>Recorded Installments:</span>
+            <PaymentBoxes payments={student.payments} paid={student.paid} />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+          {onEdit && <button type="button" onClick={() => onEdit(student)}>✏️ Edit Student</button>}
+          <button type="button" className="ghost" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ComputerTiming({ students, batches, reload, onOpenProfile, onEditStudent, onAddStudentForSlot }) {
+  const [selectedBatch, setSelectedBatch] = useState('');
+  const [search, setSearch] = useState('');
+  const [viewMode, setViewMode] = useState('table'); // 'table' (computers at top) or 'timeline' (hours at top)
+  const [assignTarget, setAssignTarget] = useState(null); // { slot, comp }
+  const [assignStudentId, setAssignStudentId] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const filteredStudents = students.filter(s => {
+    if (selectedBatch && s.batch?._id !== selectedBatch) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (s.name || '').toLowerCase().includes(q) || (s.mobile || '').includes(q) || (s.computer || '').toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const practicingStudents = students.filter(s => s.computer && s.timing);
+  let occupiedCount = 0;
+  TIME_SLOTS.forEach(slot => {
+    COMPUTERS.forEach(comp => {
+      const has = students.some(s => matchComputer(s.computer, comp) && matchTimingSlot(s.timing, slot));
+      if (has) occupiedCount++;
+    });
+  });
+  const totalSlots = TIME_SLOTS.length * COMPUTERS.length;
+  const freeSlots = Math.max(0, totalSlots - occupiedCount);
+
+  const handleAssignSubmit = async (e) => {
+    e?.preventDefault();
+    if (!assignStudentId || !assignTarget) return;
+    const targetStudent = students.find(s => s._id === assignStudentId);
+    if (!targetStudent) return;
+    setBusy(true);
+    try {
+      await api(`/students/${targetStudent._id}`, {
+        method: 'PUT',
+        body: {
+          ...targetStudent,
+          computer: assignTarget.comp,
+          timing: assignTarget.slot
+        }
+      });
+      setAssignTarget(null);
+      setAssignStudentId('');
+      await reload();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  return (
+    <>
+      <div className="timing-header-card">
+        <div>
+          <h2>💻 Computer Timing Section</h2>
+          <p style={{ margin: '4px 0 0', color: 'var(--mute)', fontSize: 13 }}>
+            Dedicated timetable for 6 practice computers (User2 to User7) from 6:00 AM to 10:00 PM.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button type="button" className="ghost" onClick={handlePrint} title="Print Timetable">
+            🖨️ Print Timetable
+          </button>
+          <div className="btn-group" style={{ display: 'inline-flex', background: '#0c1519', borderRadius: 8, padding: 3, border: '1px solid var(--line)' }}>
+            <button
+              type="button"
+              className={viewMode === 'table' ? '' : 'ghost'}
+              style={{ fontSize: 12, padding: '4px 10px', minHeight: 32 }}
+              onClick={() => setViewMode('table')}
+            >
+              📋 Computers at Top
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'timeline' ? '' : 'ghost'}
+              style={{ fontSize: 12, padding: '4px 10px', minHeight: 32 }}
+              onClick={() => setViewMode('timeline')}
+            >
+              📊 Hours as Columns
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="stats" style={{ marginBottom: 16 }}>
+        <div className="stat"><b>{practicingStudents.length}</b>Practicing Students</div>
+        <div className="stat"><b style={{ color: 'var(--brass)' }}>{occupiedCount}</b>Occupied Slots</div>
+        <div className="stat"><b style={{ color: 'var(--teal)' }}>{freeSlots}</b>Available Slots</div>
+        <div className="stat"><b>6</b>Computers (User2–User7)</div>
+      </div>
+
+      <div className="bar" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+        <select value={selectedBatch} onChange={e => setSelectedBatch(e.target.value)} style={{ maxWidth: 260 }}>
+          <option value="">All Batches ({students.length} students)</option>
+          {batches.map(b => (
+            <option key={b._id} value={b._id}>{b.name}</option>
+          ))}
+        </select>
+        <input
+          placeholder="Search student name, computer or mobile in timetable…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ maxWidth: 360 }}
+        />
+        {search && (
+          <button type="button" className="ghost" onClick={() => setSearch('')}>✕ Clear</button>
+        )}
+      </div>
+
+      {viewMode === 'table' ? (
+        /* View 1: 6 Computers as Columns User2 to User7 at top, 16 hourly slots as rows */
+        <div className="timetable-wrapper">
+          <table className="timetable-grid">
+            <thead>
+              <tr>
+                <th className="time-col">⏰ Practice Hours</th>
+                {COMPUTERS.map(c => (
+                  <th key={c} style={{ minWidth: 140 }}>
+                    <div style={{ fontSize: 16, color: 'var(--brass)' }}>🖥️ {c}</div>
+                    <div style={{ fontSize: 11, fontWeight: 400, color: 'var(--mute)' }}>Computer {c}</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {TIME_SLOTS.map(slot => (
+                <tr key={slot}>
+                  <td className="time-cell">
+                    <b>{slot}</b>
+                  </td>
+                  {COMPUTERS.map(comp => {
+                    const matched = filteredStudents.filter(s => matchComputer(s.computer, comp) && matchTimingSlot(s.timing, slot));
+                    return (
+                      <td key={comp} className="comp-slot">
+                        {matched.length > 0 ? (
+                          matched.map(st => (
+                            <div
+                              key={st._id}
+                              className="student-slot-chip"
+                              title={`Click to view profile of ${st.name} (${comp} · ${slot})`}
+                              onClick={() => onOpenProfile ? onOpenProfile(st) : onEditStudent(st)}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                {st.photo ? (
+                                  <img src={st.photo} alt={st.name} style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover' }} />
+                                ) : (
+                                  <span style={{ fontSize: 12 }}>👤</span>
+                                )}
+                                <span className="student-name">{st.name}</span>
+                              </div>
+                              <span className="student-sub">
+                                {st.subjects?.[0]?.name ? `${st.subjects[0].name} ${st.subjects[0].speed || ''} WPM` : (st.batch?.name || 'Practicing')}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <button
+                            type="button"
+                            className="empty-slot-btn"
+                            title={`Assign student to ${comp} from ${slot}`}
+                            onClick={() => setAssignTarget({ slot, comp })}
+                          >
+                            + Available
+                          </button>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        /* View 2: 16 Hourly Slots as Columns from 6 AM to 10 PM, 6 Computers as rows */
+        <div className="timetable-wrapper">
+          <table className="timetable-grid">
+            <thead>
+              <tr>
+                <th style={{ width: 120, position: 'sticky', left: 0, zIndex: 3, background: '#0a1318' }}>
+                  🖥️ Computer
+                </th>
+                {TIME_SLOTS.map(slot => (
+                  <th key={slot} style={{ minWidth: 130 }}>
+                    <div style={{ fontSize: 12 }}>{slot}</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {COMPUTERS.map(comp => (
+                <tr key={comp}>
+                  <td className="time-cell" style={{ position: 'sticky', left: 0, zIndex: 1, background: '#0a1318' }}>
+                    <div style={{ fontSize: 15, color: 'var(--brass)', fontWeight: 700 }}>🖥️ {comp}</div>
+                  </td>
+                  {TIME_SLOTS.map(slot => {
+                    const matched = filteredStudents.filter(s => matchComputer(s.computer, comp) && matchTimingSlot(s.timing, slot));
+                    return (
+                      <td key={slot} className="comp-slot">
+                        {matched.length > 0 ? (
+                          matched.map(st => (
+                            <div
+                              key={st._id}
+                              className="student-slot-chip"
+                              onClick={() => onOpenProfile ? onOpenProfile(st) : onEditStudent(st)}
+                            >
+                              <span className="student-name">{st.name}</span>
+                              <span className="student-sub">{st.subjects?.[0]?.name || st.batch?.name || 'Active'}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <button
+                            type="button"
+                            className="empty-slot-btn"
+                            onClick={() => setAssignTarget({ slot, comp })}
+                          >
+                            + Free
+                          </button>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {assignTarget && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1000, padding: 16
+        }}>
+          <div className="card" style={{ maxWidth: 480, width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <h3 style={{ margin: 0, color: 'var(--brass)', fontSize: 17 }}>
+                Assign Seat: {assignTarget.comp}
+              </h3>
+              <button type="button" className="ghost" onClick={() => setAssignTarget(null)}>✕</button>
+            </div>
+
+            <p style={{ fontSize: 13, color: 'var(--text)', margin: '0 0 14px' }}>
+              Assign an existing student to <b>{assignTarget.comp}</b> for the practice slot <b>{assignTarget.slot}</b>:
+            </p>
+
+            <form onSubmit={handleAssignSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <label>Select Student:
+                <select value={assignStudentId} onChange={e => setAssignStudentId(e.target.value)} required>
+                  <option value="">-- Choose student ({students.length} available) --</option>
+                  {students.map(s => (
+                    <option key={s._id} value={s._id}>
+                      {s.name} {s.computer ? `(Currently: ${s.computer} · ${s.timing})` : '(No PC assigned)'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    const target = assignTarget;
+                    setAssignTarget(null);
+                    if (onAddStudentForSlot) onAddStudentForSlot(target.comp, target.slot);
+                  }}
+                >
+                  + Register New Student Here
+                </button>
+                <button type="submit" disabled={busy || !assignStudentId}>
+                  {busy ? 'Saving…' : '✓ Assign Seat'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+const blank = {
+  name: '',
+  mobile: '',
+  email: '',
+  timing: '9:00 AM – 10:00 AM',
+  computer: 'User2',
+  subjects: [{ name: 'English', speed: 30 }],
+  paid: 0,
+  payments: [],
+  grNo: '',
+  motherName: '',
+  gender: 'Male',
+  dob: '',
+  admissionDate: new Date().toISOString().slice(0, 10),
+  qualification: 'H.S.C.',
+  address: '',
+  aadharNo: '',
+  photo: ''
+};
+
+function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'GCC-TBC'], reload, students, mode, initialStudentForm, onClearInitialStudentForm }) {
+  const [b, setB] = useState('');
+  const [q, setQ] = useState('');
+  const [f, setF] = useState(null);
+  const [nb, setNb] = useState('');
+  const [newSub, setNewSub] = useState('');
+  const [feeInputs, setFeeInputs] = useState(fees || { 30: 7000, 40: 5000, 50: 5000, 3000: 3000 });
+  const [showBatchManager, setShowBatchManager] = useState(false);
+
+  // Modals
+  const [activePaymentStudent, setActivePaymentStudent] = useState(null);
+  const [activeProfileStudent, setActiveProfileStudent] = useState(null);
+
+  // Form payment installment inputs
+  const [formPayAmt, setFormPayAmt] = useState('');
+  const [formPayDate, setFormPayDate] = useState(new Date().toISOString().slice(0, 10));
+  const [formPayNote, setFormPayNote] = useState('');
+
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (fees) setFeeInputs(fees);
+  }, [fees]);
+
+  useEffect(() => {
+    if (initialStudentForm) {
+      setF(initialStudentForm);
+      if (onClearInitialStudentForm) onClearInitialStudentForm();
+    }
+  }, [initialStudentForm, onClearInitialStudentForm]);
+
+  const deleteBatch = async (batchId, batchName) => {
+    const target = batches.find(x => x._id === batchId);
+    const name = batchName || target?.name || 'this batch';
+    const count = students.filter(s => s.batch?._id === batchId).length;
+    let msg = `Delete batch "${name}"?`;
+    if (count > 0) {
+      msg += `\n\n⚠️ Note: ${count} student(s) currently enrolled in this batch will be set to Unassigned (their records and fee data will remain intact).`;
+    }
+    if (!confirm(msg)) return;
+    try {
+      await api('/batches/' + batchId, { method: 'DELETE' });
+      if (b === batchId) setB('');
+      await reload();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const list = students.filter(s => {
+    const matchesBatch = !b || s.batch?._id === b;
+    if (!matchesBatch) return false;
+    if (!q) return true;
+    const query = q.toLowerCase();
+    return [
+      s.name, s.mobile, s.email, s.grNo, s.aadharNo, s.computer, s.motherName
+    ].filter(Boolean).join(' ').toLowerCase().includes(query);
+  });
+
+  const tot = f ? f.subjects.reduce((t, s) => t + (fees[s.speed] !== undefined ? Number(fees[s.speed]) : (s.speed == 3000 ? 3000 : 0)), 0) : 0;
+  const currentPaid = f ? (Array.isArray(f.payments) && f.payments.length > 0 ? f.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0) : (Number(f.paid) || 0)) : 0;
+  const currentPending = Math.max(0, tot - currentPaid);
+
+  const save = async () => {
+    try {
+      const body = {
+        ...f,
+        batch: f.batch || b || batches[0]?._id,
+        paid: currentPaid
+      };
+      if (f._id) {
+        await api('/students/' + f._id, { method: 'PUT', body });
+      } else {
+        await api('/students', { method: 'POST', body });
+      }
+      setF(null);
+      reload();
+    } catch (x) {
+      alert(x.message);
+    }
+  };
+
+  const sub = (i, k, v) => setF({ ...f, subjects: f.subjects.map((s, j) => j === i ? { ...s, [k]: k === 'speed' ? +v : v } : s) });
+
+  const handleAddSubject = async (e) => {
+    e?.preventDefault();
+    if (!newSub.trim()) return alert('Please enter a subject name');
+    try {
+      await api('/subjects', { method: 'POST', body: { name: newSub.trim() } });
+      setNewSub('');
+      await reload();
+    } catch (x) { alert(x.message); }
+  };
+
+  const handleDeleteSubject = async (name) => {
+    if (!confirm(`Remove subject "${name}" from institute registry?`)) return;
+    try {
+      await api('/subjects/' + encodeURIComponent(name), { method: 'DELETE' });
+      await reload();
+    } catch (x) { alert(x.message); }
+  };
+
+  const handleSaveFees = async () => {
+    try {
+      await api('/fees', { method: 'PUT', body: feeInputs });
+      alert('Institute Fee Rules updated successfully!');
+      await reload();
+    } catch (x) {
+      alert('Failed to save fees: ' + x.message);
+    }
+  };
+
+  // Add payment installment inside the edit form
+  const handleAddFormPayment = () => {
+    const num = Number(formPayAmt);
+    if (!num || isNaN(num) || num <= 0) return alert('Enter a valid payment installment amount');
+    const newPayments = Array.isArray(f.payments) ? [...f.payments] : [];
+    newPayments.push({
+      amount: num,
+      date: formPayDate || new Date().toISOString().slice(0, 10),
+      note: formPayNote.trim()
+    });
+    setF({
+      ...f,
+      payments: newPayments,
+      paid: newPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
+    });
+    setFormPayAmt('');
+    setFormPayNote('');
+  };
+
+  const handleRemoveFormPayment = (idx) => {
+    const newPayments = f.payments.filter((_, i) => i !== idx);
+    setF({
+      ...f,
+      payments: newPayments,
+      paid: newPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
+    });
+  };
+
+  const feeOptionsList = { ...fees, 3000: fees[3000] || 3000 };
+
+  return (
+    <>
+      <h2>{mode === 'fees' ? 'Fees & Subject Management' : 'Students Management'}</h2>
+
+      {mode === 'fees' && (
+        <>
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3 style={{ fontSize: 17, color: 'var(--brass)', marginBottom: 8 }}>💰 Manage Institute Fee Structure & Rates</h3>
+            <p style={{ fontSize: 13, color: 'var(--mute)', margin: '0 0 12px' }}>Set standard course fee rates for typing speed levels and flat fee options (e.g. ₹3,000).</p>
+            <div className="grid" style={{ marginBottom: 14 }}>
+              {Object.entries(feeInputs).map(([k, v]) => (
+                <label key={k}>
+                  {['30', '40', '50'].includes(String(k)) ? `${k} WPM Fee (₹)` : `Fee Option ₹${k} (₹)`}
+                  <input
+                    type="number"
+                    min="0"
+                    value={v}
+                    onChange={e => setFeeInputs({ ...feeInputs, [k]: Number(e.target.value) })}
+                  />
+                </label>
+              ))}
+            </div>
+            <button onClick={handleSaveFees}>💾 Save Fee Rates</button>
+          </div>
+
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3 style={{ fontSize: 17, color: 'var(--brass)', marginBottom: 8 }}>📚 Manage Institute Typing Subjects</h3>
+            <p style={{ fontSize: 13, color: 'var(--mute)', margin: '0 0 12px' }}>Add custom subjects (e.g. English, Marathi, Hindi, GCC-TBC, Shorthand) to offer at your institute.</p>
+            <div className="chip-bar" style={{ marginBottom: 14 }}>
+              {subjects.map(s => (
+                <span key={s} className="chip-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', fontSize: 13 }}>
+                  {s} <button type="button" style={{ background: 'none', border: 0, color: 'var(--bad)', padding: 0, cursor: 'pointer', fontWeight: 700 }} onClick={() => handleDeleteSubject(s)}>✕</button>
+                </span>
+              ))}
+            </div>
+            <form onSubmit={handleAddSubject} className="bar" style={{ maxWidth: 480, margin: 0 }}>
+              <input placeholder="New subject name (e.g. Hindi, GCC-TBC)" value={newSub} onChange={e => setNewSub(e.target.value)} />
+              <button type="submit">+ Add Subject</button>
+            </form>
+          </div>
+
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3 style={{ fontSize: 17, color: 'var(--brass)', marginBottom: 8 }}>📅 Manage Institute Batches</h3>
+            <p style={{ fontSize: 13, color: 'var(--mute)', margin: '0 0 12px' }}>Create new 6-month batches or remove obsolete batches. Students in deleted batches will safely become unassigned without losing records.</p>
+            <div className="chip-bar" style={{ marginBottom: 14 }}>
+              {batches.map(x => {
+                const count = students.filter(s => s.batch?._id === x._id).length;
+                return (
+                  <span key={x._id} className="chip-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '5px 12px', fontSize: 13 }}>
+                    <span>{x.name} <small style={{ opacity: 0.75 }}>({count} {count === 1 ? 'student' : 'students'})</small></span>
+                    <button
+                      type="button"
+                      title={`Delete batch "${x.name}"`}
+                      style={{ background: 'none', border: 0, color: 'var(--bad)', padding: '0 2px', cursor: 'pointer', fontWeight: 700, fontSize: 14, lineHeight: 1 }}
+                      onClick={() => deleteBatch(x._id, x.name)}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                );
+              })}
+              {!batches.length && <span style={{ color: 'var(--mute)', fontSize: 13 }}>No batches created yet.</span>}
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const d = new Date('1 ' + nb);
+              if (isNaN(d)) return alert('Use a format like June 2028');
+              try {
+                await api('/batches', { method: 'POST', body: { name: nb, start: d.toISOString().slice(0, 7) } });
+                setNb('');
+                reload();
+              } catch (x) { alert(x.message) }
+            }} className="bar" style={{ maxWidth: 480, margin: 0 }}>
+              <input placeholder="New batch, e.g. June 2028" value={nb} onChange={e => setNb(e.target.value)} />
+              <button type="submit">+ Create Batch</button>
+            </form>
+          </div>
+        </>
+      )}
+
+      <div className="bar" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <select value={b} onChange={e => setB(e.target.value)}>
+          <option value="">All batches ({students.length})</option>
+          {batches.map(x => {
+            const count = students.filter(s => s.batch?._id === x._id).length;
+            return <option key={x._id} value={x._id}>{x.name} ({count})</option>;
+          })}
+        </select>
+        {b && (
+          <button
+            type="button"
+            className="del"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            title="Delete currently selected batch"
+            onClick={() => deleteBatch(b)}
+          >
+            🗑️ Delete batch
+          </button>
+        )}
+        <input placeholder="Search by name, mobile, GR No, Aadhaar or PC…" value={q} onChange={e => setQ(e.target.value)} />
+        <button onClick={() => setF({ ...blank, batch: b || batches[0]?._id, subjects: [{ name: subjects[0] || 'English', speed: 30 }] })}>
+          + Add New Student
+        </button>
+      </div>
+
+      <div className="bar" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <input placeholder="New batch, e.g. June 2028" value={nb} onChange={e => setNb(e.target.value)} />
+        <button className="ghost" onClick={async () => {
+          const d = new Date('1 ' + nb);
+          if (isNaN(d)) return alert('Use a format like June 2028');
+          await api('/batches', { method: 'POST', body: { name: nb, start: d.toISOString().slice(0, 7) } });
           setNb('');
           reload();
-        }catch(x){alert(x.message)}
-      }} className="bar" style={{maxWidth:480,margin:0}}>
-        <input placeholder="New batch, e.g. June 2028" value={nb} onChange={e=>setNb(e.target.value)}/>
-        <button type="submit">+ Create Batch</button>
-      </form>
-    </div>
-  </>}
-
-  <div className="bar" style={{flexWrap:'wrap',gap:8}}>
-    <select value={b} onChange={e=>setB(e.target.value)}>
-      <option value="">All batches ({students.length})</option>
-      {batches.map(x=>{
-        const count = students.filter(s=>s.batch?._id===x._id).length;
-        return <option key={x._id} value={x._id}>{x.name} ({count})</option>;
-      })}
-    </select>
-    {b && (
-      <button 
-        type="button" 
-        className="del" 
-        style={{display:'inline-flex',alignItems:'center',gap:4}}
-        title="Delete currently selected batch" 
-        onClick={()=>deleteBatch(b)}
-      >
-        🗑️ Delete batch
-      </button>
-    )}
-    <input placeholder="Search name, mobile or email" value={q} onChange={e=>setQ(e.target.value)}/>
-    <button onClick={()=>setF({...blank,batch:b,subjects:[{name:subjects[0]||'English',speed:30}]})}>Add student</button>
-  </div>
-
-  <div className="bar" style={{flexWrap:'wrap',gap:8}}>
-    <input placeholder="New batch, e.g. June 2028" value={nb} onChange={e=>setNb(e.target.value)}/>
-    <button className="ghost" onClick={async()=>{const d=new Date('1 '+nb);if(isNaN(d))return alert('Use a format like June 2028');await api('/batches',{method:'POST',body:{name:nb,start:d.toISOString().slice(0,7)}});setNb('');reload()}}>Create batch</button>
-    <button 
-      type="button" 
-      className="ghost" 
-      style={{marginLeft:'auto'}}
-      onClick={()=>setShowBatchManager(v=>!v)}
-    >
-      {showBatchManager ? '▲ Hide Batches' : `📅 Manage All Batches (${batches.length})`}
-    </button>
-  </div>
-
-  {showBatchManager && (
-    <div className="card" style={{marginBottom:16,background:'rgba(16, 28, 34, 0.75)',borderColor:'rgba(212, 162, 76, 0.3)'}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-        <h4 style={{margin:0,color:'var(--brass)',fontSize:15}}>📅 Institute Batches Registry ({batches.length})</h4>
-        <button type="button" className="ghost" style={{fontSize:12,padding:'2px 8px'}} onClick={()=>setShowBatchManager(false)}>✕ Close</button>
+        }}>Create batch</button>
+        <button
+          type="button"
+          className="ghost"
+          style={{ marginLeft: 'auto' }}
+          onClick={() => setShowBatchManager(v => !v)}
+        >
+          {showBatchManager ? '▲ Hide Batches' : `📅 Manage All Batches (${batches.length})`}
+        </button>
       </div>
-      <p style={{fontSize:12,color:'var(--mute)',margin:'0 0 10px'}}>Click the ✕ next to any batch to delete it. Enrolled students will be moved to Unassigned safely.</p>
-      <div className="chip-bar" style={{margin:0}}>
-        {batches.map(x => {
-          const count = students.filter(s => s.batch?._id === x._id).length;
-          return (
-            <span key={x._id} className="chip-btn" style={{display:'inline-flex',alignItems:'center',gap:8,padding:'6px 12px',fontSize:13}}>
-              <span><b>{x.name}</b> <small style={{opacity:0.75}}>({count} {count===1?'student':'students'})</small></span>
-              <button 
-                type="button" 
-                title={`Delete batch "${x.name}"`}
-                style={{background:'none',border:0,color:'var(--bad)',padding:'0 2px',cursor:'pointer',fontWeight:700,fontSize:14,lineHeight:1}} 
-                onClick={() => deleteBatch(x._id, x.name)}
+
+      {showBatchManager && (
+        <div className="card" style={{ marginBottom: 16, background: 'rgba(16, 28, 34, 0.75)', borderColor: 'rgba(212, 162, 76, 0.3)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <h4 style={{ margin: 0, color: 'var(--brass)', fontSize: 15 }}>📅 Institute Batches Registry ({batches.length})</h4>
+            <button type="button" className="ghost" style={{ fontSize: 12, padding: '2px 8px' }} onClick={() => setShowBatchManager(false)}>✕ Close</button>
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--mute)', margin: '0 0 10px' }}>Click the ✕ next to any batch to delete it. Enrolled students will be moved to Unassigned safely.</p>
+          <div className="chip-bar" style={{ margin: 0 }}>
+            {batches.map(x => {
+              const count = students.filter(s => s.batch?._id === x._id).length;
+              return (
+                <span key={x._id} className="chip-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 12px', fontSize: 13 }}>
+                  <span><b>{x.name}</b> <small style={{ opacity: 0.75 }}>({count} {count === 1 ? 'student' : 'students'})</small></span>
+                  <button
+                    type="button"
+                    title={`Delete batch "${x.name}"`}
+                    style={{ background: 'none', border: 0, color: 'var(--bad)', padding: '0 2px', cursor: 'pointer', fontWeight: 700, fontSize: 14, lineHeight: 1 }}
+                    onClick={() => deleteBatch(x._id, x.name)}
+                  >
+                    ✕
+                  </button>
+                </span>
+              );
+            })}
+            {!batches.length && <span style={{ color: 'var(--mute)', fontSize: 13 }}>No batches created yet.</span>}
+          </div>
+        </div>
+      )}
+
+      {/* STUDENT REGISTRATION & EDIT FORM MODAL / CARD */}
+      {f && (
+        <div className="card" style={{ marginBottom: 24, border: '2px solid var(--brass)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--line)', paddingBottom: 10 }}>
+            <h3 style={{ margin: 0, color: 'var(--brass)', fontSize: 18 }}>
+              {f._id ? '✏️ Edit Student Record' : '📝 Register New Student (Maharashtra GCC-TBC Form)'}
+            </h3>
+            <button type="button" className="ghost" style={{ padding: '2px 8px' }} onClick={() => setF(null)}>✕ Cancel</button>
+          </div>
+
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginTop: 16 }}>
+            {/* Passport Size Photo Box (Top Right / Left in form) */}
+            <div className="passport-photo-container">
+              <input
+                type="file"
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+                accept="image/*"
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (file) handlePhotoSelect(file, url => setF({ ...f, photo: url }));
+                }}
+              />
+              <div
+                className="passport-photo-box"
+                onClick={() => fileInputRef.current?.click()}
+                title="Click to upload student's passport size photo"
               >
-                ✕
+                {f.photo ? (
+                  <img src={f.photo} alt="Student passport preview" />
+                ) : (
+                  <div className="passport-photo-placeholder">
+                    <span>📷</span>
+                    <b>Passport Size Photo</b>
+                    <small>Click to upload</small>
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  className="ghost"
+                  style={{ fontSize: 11, padding: '3px 8px', minHeight: 28 }}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {f.photo ? 'Change' : 'Upload'}
+                </button>
+                {f.photo && (
+                  <button
+                    type="button"
+                    className="del"
+                    style={{ fontSize: 11, padding: '3px 8px', minHeight: 28 }}
+                    onClick={() => setF({ ...f, photo: '' })}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Main Form Fields */}
+            <div style={{ flex: 1, minWidth: 280 }}>
+              <div className="form-section-title">
+                📋 GCC-TBC Examination Form Details (Points 1, 3, 4, 7, 8, 9, 13, 14, 15, 16)
+              </div>
+
+              <div className="grid">
+                <label>1. General Register No.
+                  <input
+                    placeholder="e.g. 642 / 643"
+                    value={f.grNo || ''}
+                    onChange={e => setF({ ...f, grNo: e.target.value })}
+                  />
+                </label>
+                <label>3. Student Full Name*
+                  <input
+                    placeholder="e.g. Abhishek Pawar"
+                    value={f.name || ''}
+                    onChange={e => setF({ ...f, name: e.target.value })}
+                    required
+                  />
+                </label>
+                <label>4. Mother's Name
+                  <input
+                    placeholder="e.g. Rajiya"
+                    value={f.motherName || ''}
+                    onChange={e => setF({ ...f, motherName: e.target.value })}
+                  />
+                </label>
+                <label>7. Gender
+                  <select value={f.gender || 'Male'} onChange={e => setF({ ...f, gender: e.target.value })}>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </label>
+                <label>8. Date of Birth
+                  <input
+                    type="date"
+                    value={f.dob || ''}
+                    onChange={e => setF({ ...f, dob: e.target.value })}
+                  />
+                </label>
+                <label>9. Date of Admission
+                  <input
+                    type="date"
+                    value={f.admissionDate || ''}
+                    onChange={e => setF({ ...f, admissionDate: e.target.value })}
+                  />
+                </label>
+                <label>13. Latest Educational Qualification
+                  <input
+                    placeholder="e.g. H.S.C., S.S.C., Graduate"
+                    value={f.qualification || ''}
+                    onChange={e => setF({ ...f, qualification: e.target.value })}
+                  />
+                </label>
+                <label>15. Mobile Number*
+                  <input
+                    type="tel"
+                    placeholder="e.g. 9876543210"
+                    value={f.mobile || ''}
+                    onChange={e => setF({ ...f, mobile: e.target.value })}
+                  />
+                </label>
+                <label>16. Aadhaar Number (12 digits)
+                  <input
+                    placeholder="e.g. 3183 7897 9250"
+                    value={f.aadharNo || ''}
+                    onChange={e => setF({ ...f, aadharNo: e.target.value })}
+                  />
+                </label>
+                <label>Email Address
+                  <input
+                    type="email"
+                    placeholder="e.g. student@gmail.com"
+                    value={f.email || ''}
+                    onChange={e => setF({ ...f, email: e.target.value })}
+                  />
+                </label>
+              </div>
+
+              <label style={{ marginTop: 10, display: 'block' }}>14. Address
+                <textarea
+                  rows="2"
+                  placeholder="e.g. Gawali Pokhari, Jalna"
+                  value={f.address || ''}
+                  onChange={e => setF({ ...f, address: e.target.value })}
+                />
+              </label>
+
+              {/* Computer Timing & Allocation */}
+              <div className="form-section-title" style={{ marginTop: 20 }}>
+                💻 Computer Timing & Practice Seat (Computers User2 to User7)
+              </div>
+              <div className="grid">
+                <label>Practice Computer No.*
+                  <select value={f.computer || 'User2'} onChange={e => setF({ ...f, computer: e.target.value })}>
+                    <option value="">-- None / Unassigned --</option>
+                    {COMPUTERS.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>Practice Time Slot (Hourly)*
+                  <select value={f.timing || '9:00 AM – 10:00 AM'} onChange={e => setF({ ...f, timing: e.target.value })}>
+                    {TIME_SLOTS.map(slot => (
+                      <option key={slot} value={slot}>{slot}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>Institute Batch
+                  <select value={f.batch?._id || f.batch || ''} onChange={e => setF({ ...f, batch: e.target.value })}>
+                    <option value="">-- No batch (Unassigned) --</option>
+                    {batches.map(x => (
+                      <option key={x._id} value={x._id}>{x.name}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {/* Course Subjects & Speeds */}
+              <div className="form-section-title" style={{ marginTop: 20 }}>
+                📚 5. Enrolled Examination Subjects & Rates
+              </div>
+              {f.subjects.map((s, i) => (
+                <div className="bar" key={i}>
+                  <select
+                    value={s.name}
+                    onChange={async e => {
+                      const val = e.target.value;
+                      if (val === '__custom__') {
+                        const customName = prompt('Enter new subject name (e.g. Hindi, GCC-TBC, Shorthand):');
+                        if (customName && customName.trim()) {
+                          await api('/subjects', { method: 'POST', body: { name: customName.trim() } });
+                          sub(i, 'name', customName.trim());
+                          await reload();
+                        }
+                      } else {
+                        sub(i, 'name', val);
+                      }
+                    }}
+                  >
+                    {subjects.map(subName => <option key={subName} value={subName}>{subName}</option>)}
+                    {!subjects.includes(s.name) && <option value={s.name}>{s.name}</option>}
+                    <option value="__custom__">+ Add Custom Subject Name…</option>
+                  </select>
+                  <select value={s.speed} onChange={e => sub(i, 'speed', e.target.value)}>
+                    {Object.entries(feeOptionsList).map(([vKey, vVal]) => {
+                      const label = ['30', '40', '50'].includes(String(vKey)) ? `${vKey} WPM · ${ru(vVal)}` : ru(vVal);
+                      return <option key={vKey} value={vKey}>{label}</option>;
+                    })}
+                  </select>
+                  <button type="button" className="del" onClick={() => setF({ ...f, subjects: f.subjects.filter((_, j) => j !== i) })}>Remove</button>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="ghost"
+                style={{ marginBottom: 14 }}
+                onClick={() => setF({ ...f, subjects: [...f.subjects, { name: subjects[0] || 'English', speed: 30 }] })}
+              >
+                + Add Another Subject
               </button>
-            </span>
-          );
-        })}
-        {!batches.length && <span style={{color:'var(--mute)',fontSize:13}}>No batches created yet.</span>}
+
+              {/* Multiple Fee Payments Section */}
+              <div className="form-section-title" style={{ marginTop: 20 }}>
+                💰 Multiple Fee Payments & Payment Records
+              </div>
+              <p style={{ fontSize: 13, color: 'var(--mute)', margin: '0 0 10px' }}>
+                Record each installment separately with its amount and date. Total paid and pending fees will calculate automatically.
+              </p>
+
+              {/* Recorded Payment Boxes */}
+              <div style={{ background: '#0c1519', border: '1px solid var(--line)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 8 }}>Recorded Installment Boxes:</div>
+                {Array.isArray(f.payments) && f.payments.length > 0 ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {f.payments.map((p, pIdx) => (
+                      <div key={pIdx} className="payment-box" style={{ position: 'relative' }}>
+                        <button
+                          type="button"
+                          title="Remove this installment"
+                          onClick={() => handleRemoveFormPayment(pIdx)}
+                          style={{
+                            position: 'absolute', top: -5, right: -5, width: 16, height: 16,
+                            borderRadius: '50%', background: 'var(--bad)', color: '#fff',
+                            border: 0, padding: 0, fontSize: 9, display: 'flex', alignItems: 'center',
+                            justifyContent: 'center', cursor: 'pointer'
+                          }}
+                        >✕</button>
+                        <span className="p-amt">{ru(p.amount)}</span>
+                        <span className="p-date">{formatShortDate(p.date)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : Number(f.paid) > 0 ? (
+                  <div className="payment-box">
+                    <span className="p-amt">{ru(f.paid)}</span>
+                    <span className="p-date">Initial</span>
+                  </div>
+                ) : (
+                  <span style={{ fontSize: 12, color: 'var(--mute)' }}>No installment payments recorded yet. Add the first one below.</span>
+                )}
+              </div>
+
+              {/* Add Payment Installment Sub-form */}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', background: 'rgba(212, 162, 76, 0.05)', padding: 10, borderRadius: 8, border: '1px solid var(--line)', marginBottom: 14 }}>
+                <label style={{ flex: 1, minWidth: 110, margin: 0 }}>Installment (₹)
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="e.g. 3000"
+                    value={formPayAmt}
+                    onChange={e => setFormPayAmt(e.target.value)}
+                  />
+                </label>
+                <label style={{ flex: 1, minWidth: 130, margin: 0 }}>Payment Date
+                  <input
+                    type="date"
+                    value={formPayDate}
+                    onChange={e => setFormPayDate(e.target.value)}
+                  />
+                </label>
+                <label style={{ flex: 1, minWidth: 120, margin: 0 }}>Note (Optional)
+                  <input
+                    placeholder="Cash / UPI / GPay"
+                    value={formPayNote}
+                    onChange={e => setFormPayNote(e.target.value)}
+                  />
+                </label>
+                <button
+                  type="button"
+                  style={{ minHeight: 42 }}
+                  onClick={handleAddFormPayment}
+                >
+                  + Add Payment
+                </button>
+              </div>
+
+              {/* Running Total & Pending Banner */}
+              <div style={{ background: 'rgba(15, 27, 34, 0.9)', border: '1px solid var(--line)', borderRadius: 8, padding: '10px 14px', margin: '14px 0', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+                <span>Total Fee: <b>{ru(tot)}</b></span>
+                <span>Total Paid: <b style={{ color: 'var(--teal)' }}>{ru(currentPaid)}</b></span>
+                <span>Pending Balance: <b className={currentPending > 0 ? 'pend' : 'clear'}>{ru(currentPending)}</b></span>
+              </div>
+
+              <div className="bar" style={{ marginTop: 16 }}>
+                <button onClick={save}>💾 Save Student Record</button>
+                <button className="ghost" onClick={() => setF(null)}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* STUDENTS TABLE */}
+      <div className="tw">
+        <table>
+          <thead>
+            <tr>
+              <th>Student & Photo</th>
+              <th>Batch</th>
+              <th>Computer & Practice Time</th>
+              <th>Subjects & Speed</th>
+              <th>Total Fee</th>
+              <th>Recorded Payments (Date Underneath)</th>
+              <th>Pending</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map(s => (
+              <tr key={s._id}>
+                <td>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    {s.photo ? (
+                      <img src={s.photo} alt={s.name} className="student-avatar" />
+                    ) : (
+                      <div className="student-avatar">
+                        {(s.name || 'S').slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                    <div>
+                      <b style={{ color: '#fff', fontSize: 14 }}>{s.name}</b>
+                      {s.grNo && <small style={{ display: 'block', color: 'var(--brass)' }}>GR: {s.grNo}</small>}
+                      <small style={{ color: 'var(--mute)', display: 'block' }}>{s.mobile}</small>
+                    </div>
+                  </div>
+                </td>
+                <td>{s.batch?.name || <em style={{ color: 'var(--mute)' }}>Unassigned</em>}</td>
+                <td>
+                  {s.computer ? (
+                    <div>
+                      <b style={{ color: 'var(--brass)' }}>🖥️ {s.computer}</b>
+                      <div style={{ fontSize: 12, color: 'var(--text)' }}>{s.timing || '—'}</div>
+                    </div>
+                  ) : (
+                    <span style={{ color: 'var(--mute)', fontSize: 12 }}>{s.timing || 'Not assigned'}</span>
+                  )}
+                </td>
+                <td>
+                  {s.subjects?.map(x => `${x.name} ${['30', '40', '50'].includes(String(x.speed)) ? x.speed + ' WPM' : ru(x.speed)}`).join(', ')}
+                </td>
+                <td><b>{ru(s.total)}</b></td>
+                <td>
+                  {/* Payment Amount with date underneath in small box */}
+                  <PaymentBoxes payments={s.payments} paid={s.paid} />
+                  <div style={{ fontSize: 12, marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: 'var(--mute)' }}>Total: <b style={{ color: 'var(--teal)' }}>{ru(s.paid)}</b></span>
+                    <button
+                      type="button"
+                      className="ghost"
+                      style={{ padding: '2px 8px', fontSize: 11, minHeight: 24, color: 'var(--brass)', borderColor: 'rgba(212, 162, 76, 0.4)' }}
+                      title="Record new payment installment"
+                      onClick={() => setActivePaymentStudent(s)}
+                    >
+                      + 💳 Pay
+                    </button>
+                  </div>
+                </td>
+                <td className={s.pending > 0 ? 'pend' : 'clear'}>
+                  {s.pending > 0 ? ru(s.pending) : 'Cleared'}
+                </td>
+                <td>
+                  <div style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      className="ghost"
+                      style={{ padding: '4px 8px' }}
+                      title="View Student Admission Card"
+                      onClick={() => setActiveProfileStudent(s)}
+                    >
+                      👁️
+                    </button>
+                    {s.mobile && (
+                      <button
+                        className="ghost"
+                        style={{ color: '#25D366', padding: '4px 8px' }}
+                        title="Open WhatsApp Reminder"
+                        onClick={() => {
+                          const n = s.mobile.replace(/[^0-9]/g, '');
+                          const num = n.length === 10 ? '91' + n : n;
+                          const text = encodeURIComponent(`Dear ${s.name}, your pending fee is ${ru(s.pending)}. Please clear it at DISHA Typing Institute.`);
+                          window.open('https://wa.me/' + num + '?text=' + text, '_blank');
+                        }}
+                      >
+                        💬
+                      </button>
+                    )}
+                    <button className="ghost" style={{ padding: '4px 8px' }} onClick={() => setF(s)}>Edit</button>
+                    <button
+                      className="del"
+                      style={{ padding: '4px 8px' }}
+                      onClick={async () => {
+                        if (confirm('Delete ' + s.name + '?')) {
+                          await api('/students/' + s._id, { method: 'DELETE' });
+                          reload();
+                        }
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!list.length && <div className="empty">No students found matching your filters. Add the first one.</div>}
       </div>
-    </div>
-  )}
 
-  {f&&<div className="card">
-    <h3>{f._id?'Edit student':'New student'}</h3>
-    <div className="grid" style={{marginTop:14}}>
-      {[['name','Full name'],['mobile','Mobile number'],['email','Email address'],['timing','Practice timing']].map(([k,l])=><label key={k}>{l}<input value={f[k]||''} onChange={e=>setF({...f,[k]:e.target.value})}/></label>)}
-      <label>Batch<select value={f.batch?._id||f.batch||''} onChange={e=>setF({...f,batch:e.target.value})}><option value="">-- No batch (Unassigned) --</option>{batches.map(x=><option key={x._id} value={x._id}>{x.name}</option>)}</select></label>
-      <label>Fees paid (₹)<input type="number" min="0" value={f.paid} onChange={e=>setF({...f,paid:e.target.value})}/></label>
-    </div>
+      {/* QUICK PAYMENT RECORDING MODAL */}
+      {activePaymentStudent && (
+        <PaymentModal
+          student={activePaymentStudent}
+          onClose={() => setActivePaymentStudent(null)}
+          reload={reload}
+        />
+      )}
 
-    <label style={{fontWeight:600,color:'var(--text)',marginBottom:6}}>Enrolled Subjects & Fee Option</label>
-    {f.subjects.map((s,i)=><div className="bar" key={i}>
-      <select value={s.name} onChange={async e=>{
-        const val = e.target.value;
-        if (val === '__custom__') {
-          const customName = prompt('Enter new subject name (e.g. Hindi, GCC-TBC, Shorthand):');
-          if (customName && customName.trim()) {
-            await api('/subjects', { method: 'POST', body: { name: customName.trim() } });
-            sub(i, 'name', customName.trim());
-            await reload();
-          }
-        } else {
-          sub(i, 'name', val);
-        }
-      }}>
-        {subjects.map(subName => <option key={subName} value={subName}>{subName}</option>)}
-        {!subjects.includes(s.name) && <option value={s.name}>{s.name}</option>}
-        <option value="__custom__">+ Add Custom Subject Name…</option>
-      </select>
-      <select value={s.speed} onChange={e=>sub(i,'speed',e.target.value)}>
-        {Object.entries(feeOptionsList).map(([vKey, vVal]) => {
-          const label = ['30','40','50'].includes(String(vKey)) ? `${vKey} WPM · ${ru(vVal)}` : ru(vVal);
-          return <option key={vKey} value={vKey}>{label}</option>;
-        })}
-      </select>
-      <button type="button" className="del" onClick={()=>setF({...f,subjects:f.subjects.filter((_,j)=>j!==i)})}>Remove</button>
-    </div>)}
-
-    <button type="button" className="ghost" style={{marginBottom:14}} onClick={()=>setF({...f,subjects:[...f.subjects,{name:subjects[0]||'English',speed:30}]})}>+ Add Subject</button>
-
-    <p>Total {ru(tot)} · Pending <b className="pend">{ru(tot-f.paid)}</b></p>
-    <div className="bar"><button onClick={save}>Save student</button><button className="ghost" onClick={()=>setF(null)}>Cancel</button></div>
-  </div>}
-
-  <div className="tw"><table><thead><tr><th>Name</th><th>Batch</th><th>Timing</th><th>Subjects & Option</th><th>Total</th><th>Paid</th><th>Pending</th><th></th></tr></thead><tbody>
-   {list.map(s=><tr key={s._id}>
-     <td>{s.name}<br/><small>{s.mobile}</small></td>
-     <td>{s.batch?.name || <em style={{color:'var(--mute)'}}>Unassigned</em>}</td>
-     <td>{s.timing}</td>
-     <td>{s.subjects.map(x=>x.name+' '+(['30','40','50'].includes(String(x.speed))?x.speed+' WPM':ru(x.speed))).join(', ')}</td>
-     <td>{ru(s.total)}</td>
-     <td>{ru(s.paid)}</td>
-     <td className={s.pending>0?'pend':'clear'}>{s.pending>0?ru(s.pending):'Cleared'}</td>
-     <td>{s.mobile&&<button className="ghost" style={{color:'#25D366',padding:'4px 8px',marginRight:4}} title="Open WhatsApp" onClick={()=>{const n=s.mobile.replace(/[^0-9]/g,'');const num=n.length===10?'91'+n:n;const text=encodeURIComponent(`Dear ${s.name}, your pending fee is ${ru(s.pending)}. Please clear it at DISHA Typing Institute.`);window.open('https://wa.me/'+num+'?text='+text,'_blank')}}>💬</button>}<button className="ghost" onClick={()=>setF(s)}>Edit</button><button className="del" onClick={async()=>{if(confirm('Delete '+s.name+'?')){await api('/students/'+s._id,{method:'DELETE'});reload()}}}>Delete</button></td>
-   </tr>)}</tbody></table>
-   {!list.length&&<div className="empty">No students here yet. Add the first one.</div>}</div></>;
+      {/* STUDENT FULL GCC-TBC PROFILE MODAL */}
+      {activeProfileStudent && (
+        <StudentProfileModal
+          student={activeProfileStudent}
+          onClose={() => setActiveProfileStudent(null)}
+          onEdit={st => {
+            setActiveProfileStudent(null);
+            setF(st);
+          }}
+        />
+      )}
+    </>
+  );
 }
 
 function Notify({batches, students}){
@@ -1238,9 +2416,13 @@ export default function App() {
     </>
   );
 
+  const [studentToEdit, setStudentToEdit] = useState(null);
+  const [selectedProfile, setSelectedProfile] = useState(null);
+
   const navTabs = [
     { id: 'home', label: 'Home', short: 'Home', icon: '🏠' },
     { id: 'students', label: 'Students', short: 'Students', icon: '👥' },
+    { id: 'timing', label: 'Computer Timing', short: 'Timing', icon: '💻' },
     { id: 'fees', label: 'Fees & Rates', short: 'Fees', icon: '💰' },
     { id: 'notify', label: 'Fee Reminders', short: 'Alerts', icon: '💬' },
     { id: 'backup', label: 'Cloud Backup', short: 'Cloud', icon: '☁️' },
@@ -1294,11 +2476,55 @@ export default function App() {
           </div>
         )}
         {tab === 'home' && <Home batches={batches} students={students} reload={reload} cloudCheck={cloudCheck} onRestoreCloud={handleRestoreFromCloud} onDismissBanner={() => setCloudCheck(null)} />}
-        {(tab === 'students' || tab === 'fees') && <Students key={tab} mode={tab} {...{ batches, fees, subjects, reload, students }} />}
+        {tab === 'timing' && (
+          <ComputerTiming
+            students={students}
+            batches={batches}
+            reload={reload}
+            onOpenProfile={s => setSelectedProfile(s)}
+            onEditStudent={s => { setStudentToEdit(s); setTab('students'); }}
+            onAddStudentForSlot={(comp, slot) => {
+              setStudentToEdit({
+                ...blank,
+                computer: comp,
+                timing: slot,
+                batch: batches[0]?._id,
+                subjects: [{ name: subjects[0] || 'English', speed: 30 }]
+              });
+              setTab('students');
+            }}
+          />
+        )}
+        {(tab === 'students' || tab === 'fees') && (
+          <Students
+            key={tab}
+            mode={tab}
+            batches={batches}
+            fees={fees}
+            subjects={subjects}
+            reload={reload}
+            students={students}
+            initialStudentForm={studentToEdit}
+            onClearInitialStudentForm={() => setStudentToEdit(null)}
+          />
+        )}
         {tab === 'notify' && <Notify batches={batches} students={students} />}
         {tab === 'backup' && <CloudBackup userEmail={u?.email} reload={reload} />}
         {tab === 'docs' && <Docs students={students} batches={batches} />}
       </main>
+
+      {/* Full Student Profile Modal */}
+      {selectedProfile && (
+        <StudentProfileModal
+          student={selectedProfile}
+          onClose={() => setSelectedProfile(null)}
+          onEdit={s => {
+            setSelectedProfile(null);
+            setStudentToEdit(s);
+            setTab('students');
+          }}
+        />
+      )}
 
       {/* Mobile Bottom Tab Navigation */}
       <nav className="mobile-bottom-nav">

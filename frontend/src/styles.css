@@ -847,3 +847,220 @@ th {
     transition: none !important;
   }
 }
+
+/* --- COMPUTER TIMING & TIMETABLE SECTION --- */
+.timing-header-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.timetable-wrapper {
+  overflow-x: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  margin-bottom: 24px;
+}
+.timetable-grid {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 880px;
+}
+.timetable-grid th, .timetable-grid td {
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  text-align: center;
+  vertical-align: middle;
+}
+.timetable-grid th {
+  background: #0f1b22;
+  color: var(--brass);
+  font-weight: 700;
+  font-size: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.timetable-grid th.time-col {
+  width: 140px;
+  min-width: 130px;
+  background: #0a1318;
+  color: var(--text);
+  text-align: left;
+}
+.timetable-grid td.time-cell {
+  background: rgba(15, 27, 34, 0.7);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--brass);
+  text-align: left;
+  white-space: nowrap;
+}
+.timetable-grid td.comp-slot {
+  height: 64px;
+  min-width: 120px;
+  background: rgba(23, 38, 47, 0.4);
+  transition: background 0.15s ease;
+  position: relative;
+}
+.timetable-grid td.comp-slot:hover {
+  background: rgba(212, 162, 76, 0.08);
+}
+.student-slot-chip {
+  background: linear-gradient(135deg, rgba(212, 162, 76, 0.22), rgba(63, 181, 163, 0.2));
+  border: 1px solid var(--brass);
+  border-radius: 6px;
+  padding: 5px 8px;
+  margin: 2px 0;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.student-slot-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(212, 162, 76, 0.3);
+}
+.student-slot-chip .student-name {
+  font-weight: 700;
+  font-size: 13px;
+  color: #fff;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.student-slot-chip .student-sub {
+  font-size: 11px;
+  color: var(--brass);
+  display: block;
+}
+.empty-slot-btn {
+  background: transparent;
+  border: 1px dashed rgba(141, 160, 166, 0.3);
+  color: rgba(141, 160, 166, 0.6);
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  width: 100%;
+  min-height: 32px;
+  transition: all 0.15s ease;
+}
+.empty-slot-btn:hover {
+  border-color: var(--brass);
+  color: var(--brass);
+  background: rgba(212, 162, 76, 0.08);
+}
+
+/* --- PAYMENT SMALL BOXES --- */
+.payment-box-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.payment-box {
+  background: rgba(212, 162, 76, 0.12);
+  border: 1px solid rgba(212, 162, 76, 0.45);
+  border-radius: 6px;
+  padding: 3px 8px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 65px;
+  line-height: 1.25;
+  transition: transform 0.1s ease;
+}
+.payment-box:hover {
+  background: rgba(212, 162, 76, 0.22);
+}
+.payment-box .p-amt {
+  font-weight: 700;
+  color: var(--brass);
+  font-size: 13px;
+}
+.payment-box .p-date {
+  font-size: 11px;
+  color: var(--mute);
+  margin-top: 1px;
+}
+
+/* --- PASSPORT PHOTO UPLOAD & PREVIEW --- */
+.passport-photo-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.passport-photo-box {
+  width: 120px;
+  height: 150px;
+  border: 2px dashed rgba(212, 162, 76, 0.5);
+  border-radius: 8px;
+  background: rgba(12, 21, 25, 0.8);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.passport-photo-box:hover {
+  border-color: var(--brass);
+  background: rgba(212, 162, 76, 0.08);
+}
+.passport-photo-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.passport-photo-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  color: var(--mute);
+  padding: 8px;
+  font-size: 12px;
+}
+.passport-photo-placeholder span {
+  font-size: 28px;
+  margin-bottom: 4px;
+}
+.student-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--brass);
+  background: #0c1519;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--brass);
+}
+
+/* Form section dividers */
+.form-section-title {
+  color: var(--brass);
+  font-size: 15px;
+  font-weight: 700;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+  margin: 18px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
