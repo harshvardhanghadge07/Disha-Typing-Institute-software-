@@ -981,6 +981,7 @@ const blank = {
 function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'GCC-TBC'], reload, students, mode, initialStudentForm, onClearInitialStudentForm }) {
   const [b, setB] = useState('');
   const [q, setQ] = useState('');
+  const [sortBy, setSortBy] = useState('name_asc');
   const [f, setF] = useState(null);
   const [nb, setNb] = useState('');
   const [newSub, setNewSub] = useState('');
@@ -1035,6 +1036,50 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
     return [
       s.name, s.mobile, s.email, s.grNo, s.aadharNo, s.computer, s.motherName
     ].filter(Boolean).join(' ').toLowerCase().includes(query);
+  });
+
+  const sortedList = [...list].sort((a, b) => {
+    switch (sortBy) {
+      case 'name_asc':
+        return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+      case 'name_desc':
+        return (b.name || '').localeCompare(a.name || '', undefined, { sensitivity: 'base' });
+      case 'pending_desc':
+        return (b.pending || 0) - (a.pending || 0);
+      case 'pending_asc':
+        return (a.pending || 0) - (b.pending || 0);
+      case 'paid_desc':
+        return (b.paid || 0) - (a.paid || 0);
+      case 'paid_asc':
+        return (a.paid || 0) - (b.paid || 0);
+      case 'total_desc':
+        return (b.total || 0) - (a.total || 0);
+      case 'total_asc':
+        return (a.total || 0) - (b.total || 0);
+      case 'gr_asc':
+        return (a.grNo || '').localeCompare(b.grNo || '', undefined, { numeric: true });
+      case 'pc_asc':
+        return (a.computer || '').localeCompare(b.computer || '', undefined, { numeric: true });
+      case 'timing_asc': {
+        const slotA = TIME_SLOTS.findIndex(s => matchTimingSlot(a.timing, s));
+        const slotB = TIME_SLOTS.findIndex(s => matchTimingSlot(b.timing, s));
+        const idxA = slotA === -1 ? 999 : slotA;
+        const idxB = slotB === -1 ? 999 : slotB;
+        return idxA - idxB;
+      }
+      case 'newest': {
+        const dateA = new Date(a.admissionDate || a.createdAt || 0).getTime();
+        const dateB = new Date(b.admissionDate || b.createdAt || 0).getTime();
+        return dateB - dateA;
+      }
+      case 'oldest': {
+        const dateA = new Date(a.admissionDate || a.createdAt || 0).getTime();
+        const dateB = new Date(b.admissionDate || b.createdAt || 0).getTime();
+        return dateA - dateB;
+      }
+      default:
+        return (a.name || '').localeCompare(b.name || '');
+    }
   });
 
   const tot = f ? f.subjects.reduce((t, s) => t + (fees[s.speed] !== undefined ? Number(fees[s.speed]) : (s.speed == 3000 ? 3000 : 0)), 0) : 0;
@@ -1200,8 +1245,8 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
         </>
       )}
 
-      <div className="bar" style={{ flexWrap: 'wrap', gap: 8 }}>
-        <select value={b} onChange={e => setB(e.target.value)}>
+      <div className="bar" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <select value={b} onChange={e => setB(e.target.value)} style={{ minWidth: 160 }}>
           <option value="">All batches ({students.length})</option>
           {batches.map(x => {
             const count = students.filter(s => s.batch?._id === x._id).length;
@@ -1219,7 +1264,44 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
             🗑️ Delete batch
           </button>
         )}
-        <input placeholder="Search by name, mobile, GR No, Aadhaar or PC…" value={q} onChange={e => setQ(e.target.value)} />
+        <input
+          placeholder="Search by name, mobile, GR No, Aadhaar or PC…"
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          style={{ flex: 1, minWidth: 200 }}
+        />
+
+        {/* Sort by A-Z Button */}
+        <button
+          type="button"
+          className={sortBy === 'name_asc' || sortBy === 'name_desc' ? '' : 'ghost'}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 42, whiteSpace: 'nowrap' }}
+          title="Click to toggle Name Sort (A-Z / Z-A)"
+          onClick={() => setSortBy(prev => prev === 'name_asc' ? 'name_desc' : 'name_asc')}
+        >
+          {sortBy === 'name_desc' ? '🔤 Name (Z → A) ▼' : '🔤 Name (A → Z) ▲'}
+        </button>
+
+        {/* Extended Sort Options */}
+        <select
+          value={sortBy}
+          onChange={e => setSortBy(e.target.value)}
+          style={{ minWidth: 190, maxWidth: 240 }}
+          title="Sort by filter"
+        >
+          <option value="name_asc">🔤 Sort: Name (A to Z)</option>
+          <option value="name_desc">🔤 Sort: Name (Z to A)</option>
+          <option value="pending_desc">⚠️ Sort: Pending Fees (Highest First)</option>
+          <option value="pending_asc">✅ Sort: Pending Fees (Cleared First)</option>
+          <option value="paid_desc">💰 Sort: Fees Paid (Highest First)</option>
+          <option value="total_desc">📊 Sort: Total Course Fee (High → Low)</option>
+          <option value="timing_asc">⏰ Sort: Practice Timing (Earliest First)</option>
+          <option value="pc_asc">🖥️ Sort: Computer (User2 → User7)</option>
+          <option value="gr_asc">📋 Sort: General Register No.</option>
+          <option value="newest">📅 Sort: Admission Date (Newest First)</option>
+          <option value="oldest">📅 Sort: Admission Date (Oldest First)</option>
+        </select>
+
         <button onClick={() => setF({ ...blank, batch: b || batches[0]?._id, subjects: [{ name: subjects[0] || 'English', speed: 30 }] })}>
           + Add New Student
         </button>
@@ -1594,18 +1676,63 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
         <table>
           <thead>
             <tr>
-              <th>Student & Photo</th>
+              <th
+                className="sortable-th"
+                onClick={() => setSortBy(prev => prev === 'name_asc' ? 'name_desc' : 'name_asc')}
+                title="Click to sort by Name (A-Z / Z-A)"
+              >
+                Student & Photo
+                <span className="sort-badge">
+                  {sortBy === 'name_asc' ? '▲ (A-Z)' : sortBy === 'name_desc' ? '▼ (Z-A)' : '↕'}
+                </span>
+              </th>
               <th>Batch</th>
-              <th>Computer & Practice Time</th>
+              <th
+                className="sortable-th"
+                onClick={() => setSortBy(prev => prev === 'timing_asc' ? 'pc_asc' : 'timing_asc')}
+                title="Click to sort by Timing or Computer"
+              >
+                Computer & Practice Time
+                <span className="sort-badge">
+                  {sortBy === 'timing_asc' ? '▲ (Time)' : sortBy === 'pc_asc' ? '▲ (PC)' : '↕'}
+                </span>
+              </th>
               <th>Subjects & Speed</th>
-              <th>Total Fee</th>
-              <th>Recorded Payments (Date Underneath)</th>
-              <th>Pending</th>
+              <th
+                className="sortable-th"
+                onClick={() => setSortBy(prev => prev === 'total_desc' ? 'total_asc' : 'total_desc')}
+                title="Click to sort by Total Course Fee"
+              >
+                Total Fee
+                <span className="sort-badge">
+                  {sortBy === 'total_desc' ? '▼' : sortBy === 'total_asc' ? '▲' : '↕'}
+                </span>
+              </th>
+              <th
+                className="sortable-th"
+                onClick={() => setSortBy(prev => prev === 'paid_desc' ? 'paid_asc' : 'paid_desc')}
+                title="Click to sort by Paid Amount"
+              >
+                Recorded Payments (Date Underneath)
+                <span className="sort-badge">
+                  {sortBy === 'paid_desc' ? '▼' : sortBy === 'paid_asc' ? '▲' : '↕'}
+                </span>
+              </th>
+              <th
+                className="sortable-th"
+                onClick={() => setSortBy(prev => prev === 'pending_desc' ? 'pending_asc' : 'pending_desc')}
+                title="Click to sort by Pending Balance"
+              >
+                Pending
+                <span className="sort-badge">
+                  {sortBy === 'pending_desc' ? '▼' : sortBy === 'pending_asc' ? '▲' : '↕'}
+                </span>
+              </th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {list.map(s => (
+            {sortedList.map(s => (
               <tr key={s._id}>
                 <td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

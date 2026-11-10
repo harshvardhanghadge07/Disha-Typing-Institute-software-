@@ -1064,3 +1064,22 @@ th {
   gap: 8px;
 }
 
+/* Sortable Table Headers */
+.sortable-th {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.sortable-th:hover {
+  color: var(--brass) !important;
+  background-color: rgba(212, 162, 76, 0.1) !important;
+}
+.sort-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--brass);
+  opacity: 0.85;
+}
+
+
