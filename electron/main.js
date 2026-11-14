@@ -49,8 +49,8 @@ async function startServer() {
 }
 
 // ── poll until backend is ready ──────────────────────────────────────────────
-function waitForServer(retries = 60) {
-  const url = `http://127.0.0.1:${PORT}/api/batches`;
+function waitForServer(retries = 100) {
+  const url = `http://127.0.0.1:${PORT}/api/health`;
   return new Promise((resolve, reject) => {
     const attempt = (n) => {
       const req = http.get(url, res => {
@@ -59,9 +59,9 @@ function waitForServer(retries = 60) {
       });
       req.on('error', () => {
         if (n <= 0) return reject(new Error('Backend server failed to start in time.'));
-        setTimeout(() => attempt(n - 1), 500);
+        setTimeout(() => attempt(n - 1), 100);
       });
-      req.setTimeout(1000, () => req.destroy());
+      req.setTimeout(800, () => req.destroy());
     };
     attempt(retries);
   });
@@ -86,32 +86,30 @@ async function createWindow() {
     },
   });
 
-  // Show a loading page while server boots
-  const loadingHtml = `data:text/html,
-    <html><head><style>
-      *{margin:0;padding:0;box-sizing:border-box}
-      body{background:#0f1724;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui,sans-serif;color:#00d4ff}
-      .logo{font-size:48px;font-weight:900;letter-spacing:4px;text-shadow:0 0 30px #00d4ff80;margin-bottom:16px}
-      .sub{font-size:14px;color:#6b7fa3;letter-spacing:2px;margin-bottom:40px}
-      .bar{width:220px;height:3px;background:#1a2640;border-radius:4px;overflow:hidden}
-      .fill{height:100%;background:linear-gradient(90deg,#00d4ff,#0099bb);border-radius:4px;animation:slide 1.4s ease-in-out infinite}
-      @keyframes slide{0%{width:0%}50%{width:80%}100%{width:100%}}
-    </style></head><body>
-      <div class="logo">DISHA</div>
-      <div class="sub">COMPUTER TYPING INSTITUTE</div>
-      <div class="bar"><div class="fill"></div></div>
-    </body></html>`;
-
-  win.loadURL(loadingHtml);
-  win.once('ready-to-show', () => win.show());
-
   try {
     await waitForServer();
+    try { await win.webContents.session.clearCache(); } catch {}
     win.loadURL(`http://127.0.0.1:${PORT}`);
+    win.once('ready-to-show', () => {
+      if (win) {
+        win.show();
+        win.focus();
+      }
+    });
+    setTimeout(() => {
+      if (win && !win.isVisible()) {
+        win.show();
+        win.focus();
+      }
+    }, 1500);
   } catch (err) {
     dialog.showErrorBox('Startup Error', 'Could not connect to the DISHA backend.\n\n' + err.message);
     app.quit();
   }
+
+  win.webContents.on('did-fail-load', (e, code, desc, url) => {
+    console.error(`[Renderer load failed] ${code} ${desc} for ${url}`);
+  });
 
   // open external links in the system browser
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -140,7 +138,6 @@ function createTray() {
 
 // ── app lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
-  createWindow();
   try {
     await startServer();
   } catch (err) {
@@ -148,9 +145,9 @@ app.whenReady().then(async () => {
       console.log('[main] Port 5000 is already active.');
     } else {
       console.error('Backend error:', err);
-      dialog.showErrorBox('Backend Startup Error', err.stack || err.message);
     }
   }
+  createWindow();
   createTray();
 });
 

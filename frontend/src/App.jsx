@@ -1,4 +1,4 @@
-import {useState,useEffect,useCallback,lazy,Suspense,useRef} from 'react';
+import React, {useState,useEffect,useCallback,lazy,Suspense,useRef,Component} from 'react';
 const Scene=lazy(()=>import('./Scenes.jsx'));
 let TOKEN=sessionStorage.getItem('t')||'',DOC='';
 const getApiBaseUrl=()=>{
@@ -41,7 +41,26 @@ const api=async(p,o={})=>{
 };
 
 const ru=n=>'₹'+(n||0).toLocaleString('en-IN');
-const Stage=({kind})=><div className="stage"><Suspense fallback={null}><Scene kind={kind}/></Suspense></div>;
+
+class StageErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false }; }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(err) { console.warn('3D Stage render error:', err); }
+  render() {
+    if (this.state.hasError) return <div className="stage stage-fallback" style={{ minHeight: 180 }} />;
+    return this.props.children;
+  }
+}
+
+const Stage=({kind})=>(
+  <StageErrorBoundary>
+    <div className="stage">
+      <Suspense fallback={<div style={{ minHeight: 180 }} />}>
+        <Scene kind={kind}/>
+      </Suspense>
+    </div>
+  </StageErrorBoundary>
+);
 
 function ForgotPassword({onBack}){
   const [e,setE]=useState('');
@@ -133,15 +152,34 @@ function ResetPassword({token}){const [p,setP]=useState(''),[p2,setP2]=useState(
   {!msg&&<button style={{width:'100%'}} disabled={loading}>{loading?'Saving…':'Set new password'}</button>}
  </form></div>}
 
-function Login({onIn,onOpenServerModal}){const [e,setE]=useState(''),[p,setP]=useState(''),[err,setErr]=useState(''),[forgot,setForgot]=useState(false);
+function Login({onIn,onOpenServerModal}){const [e,setE]=useState(''),[p,setP]=useState(''),[err,setErr]=useState(''),[forgot,setForgot]=useState(false),[loading,setLoading]=useState(false);
  const params=new URLSearchParams(window.location.search),resetToken=params.get('token');
  if(resetToken)return <ResetPassword token={resetToken}/>;
  if(forgot)return <ForgotPassword onBack={()=>setForgot(false)}/>;
- const go=async ev=>{ev.preventDefault();try{const r=await api('/login',{method:'POST',body:{email:e,password:p}});TOKEN=r.token;sessionStorage.setItem('t',TOKEN);onIn(r)}catch(x){setErr(x.message)}};
+ const go=async ev=>{
+   ev.preventDefault();
+   setLoading(true);
+   setErr('');
+   try{
+     const r=await api('/login',{method:'POST',body:{email:e,password:p}});
+     TOKEN=r.token;
+     sessionStorage.setItem('t',TOKEN);
+     onIn(r);
+   }catch(x){
+     const msg = x?.message || '';
+     if (msg.includes('buffering timed out') || msg.includes('connecting') || msg.includes('ECONNREFUSED')) {
+       setErr('Connecting to cloud database... Please check your internet connection and try again.');
+     } else {
+       setErr(msg);
+     }
+   }finally{
+     setLoading(false);
+   }
+ };
  return <div className="login"><Stage kind="pc"/><form onSubmit={go}><h1>DISHA Typing Institute</h1><p>Staff login. Student records are private.</p>
   <label>Email<input type="email" value={e} onChange={x=>setE(x.target.value)} required autoFocus/></label>
   <label>Password<input type="password" value={p} onChange={x=>setP(x.target.value)} required/></label>
-  <div className="err" role="alert">{err}</div><button style={{width:'100%'}}>Log in</button>
+  <div className="err" role="alert">{err}</div><button style={{width:'100%'}} disabled={loading}>{loading ? 'Connecting & Logging in…' : 'Log in'}</button>
   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:8}}>
    <button type="button" className="ghost" style={{fontSize:13}} onClick={()=>setForgot(true)}>Forgot password?</button>
    {onOpenServerModal&&<button type="button" className="ghost" style={{fontSize:12,color:'var(--brass)'}} onClick={onOpenServerModal}>⚙️ Server IP</button>}
@@ -340,14 +378,18 @@ const formatShortDate = (d) => {
   return String(d).slice(0, 10);
 };
 
+const getStudentTimings = (studentTiming) => {
+  if (!studentTiming) return [];
+  if (Array.isArray(studentTiming)) return studentTiming.map(s => String(s).trim()).filter(Boolean);
+  return String(studentTiming).split(/[,;|\n]+/).map(s => s.trim()).filter(Boolean);
+};
+
 const matchTimingSlot = (studentTiming, slot) => {
   if (!studentTiming || !slot) return false;
-  const clean = s => s.toLowerCase().replace(/\s+/g, '').replace(/–/g, '-');
-  const st = clean(studentTiming);
+  const list = getStudentTimings(studentTiming);
+  const clean = s => s.toLowerCase().replace(/\s+/g, '').replace(/–/g, '-').replace(/:00/g, '');
   const sl = clean(slot);
-  if (st === sl) return true;
-  const noZeros = s => s.replace(/:00/g, '');
-  return noZeros(st) === noZeros(sl);
+  return list.some(st => clean(st) === sl);
 };
 
 const matchComputer = (studentComp, comp) => {
@@ -387,14 +429,73 @@ const handlePhotoSelect = (file, callback) => {
   reader.readAsDataURL(file);
 };
 
-function PaymentBoxes({ payments, paid }) {
+const formatMobile = (m) => {
+  let n = String(m || '').replace(/[^0-9]/g, '');
+  return n.length === 10 ? '91' + n : n;
+};
+
+function generateFeeReceiptMsg(student, payment, totalFee, newPaidFee, remainingBalance) {
+  const dateStr = payment?.date
+    ? new Date(payment.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+    : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const amtStr = '₹' + Number(payment?.amount || 0).toLocaleString('en-IN');
+  const totalStr = '₹' + Number(totalFee || 0).toLocaleString('en-IN');
+  const paidStr = '₹' + Number(newPaidFee || 0).toLocaleString('en-IN');
+  const remStr = '₹' + Number(remainingBalance || 0).toLocaleString('en-IN');
+  const noteStr = payment?.note ? `\n📝 *Payment Mode/Note:* ${payment.note}` : '';
+
+  return `*DISHA COMPUTER TYPING INSTITUTE* 🎓\n` +
+         `*FEE PAYMENT RECEIPT / फी पावती*\n\n` +
+         `Dear *${student?.name || 'Student'}*,\n` +
+         `Thank you! We have received your fee payment installment.\n\n` +
+         `📅 *Payment Date:* ${dateStr}\n` +
+         `💵 *Amount Received:* ${amtStr}${noteStr}\n\n` +
+         `📊 *Fee Account Summary:*\n` +
+         `• Total Course Fee: ${totalStr}\n` +
+         `• Total Fees Paid So Far: ${paidStr}\n` +
+         `• *Remaining Balance:* ${remStr}\n\n` +
+         (remainingBalance > 0
+           ? `⏳ Please clear the remaining balance of ${remStr} before the due date.`
+           : `🎉 *Congratulations! Your full course fees are completely cleared!*`) +
+         `\n\n_DISHA Computer Typing Institute, Jalna_`;
+}
+
+function openPaymentWhatsApp(student, payment, totalFee, newPaidFee, remainingBalance) {
+  if (!student?.mobile) {
+    alert('No mobile number saved for ' + (student?.name || 'this student'));
+    return;
+  }
+  const msg = generateFeeReceiptMsg(student, payment, totalFee, newPaidFee, remainingBalance);
+  const num = formatMobile(student.mobile);
+  window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
+}
+
+function PaymentBoxes({ payments, paid, student, onSendWA }) {
   if (Array.isArray(payments) && payments.length > 0) {
     return (
       <div className="payment-box-list">
         {payments.map((p, idx) => (
-          <div key={idx} className="payment-box" title={p.note ? `${p.note} (${formatShortDate(p.date)})` : `Payment #${idx+1} (${formatShortDate(p.date)})`}>
+          <div
+            key={idx}
+            className="payment-box"
+            title={p.note ? `${p.note} (${formatShortDate(p.date)})` : `Payment #${idx+1} (${formatShortDate(p.date)})`}
+          >
             <span className="p-amt">{ru(p.amount)}</span>
             <span className="p-date">{formatShortDate(p.date)}</span>
+            {student?.mobile && (
+              <button
+                type="button"
+                className="p-wa-btn"
+                title="Send WhatsApp Receipt for this payment"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onSendWA) onSendWA(p);
+                  else openPaymentWhatsApp(student, p, student.total, student.paid, student.pending);
+                }}
+              >
+                💬
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -406,6 +507,25 @@ function PaymentBoxes({ payments, paid }) {
         <div className="payment-box" title="Initial Recorded Payment">
           <span className="p-amt">{ru(paid)}</span>
           <span className="p-date">Paid</span>
+          {student?.mobile && (
+            <button
+              type="button"
+              className="p-wa-btn"
+              title="Send WhatsApp Receipt for this payment"
+              onClick={(e) => {
+                e.stopPropagation();
+                openPaymentWhatsApp(
+                  student,
+                  { amount: paid, date: student.admissionDate || new Date().toISOString().slice(0, 10), note: 'Fees Paid' },
+                  student.total,
+                  student.paid,
+                  student.pending
+                );
+              }}
+            >
+              💬
+            </button>
+          )}
         </div>
       </div>
     );
@@ -417,6 +537,8 @@ function PaymentModal({ student, onClose, reload }) {
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [note, setNote] = useState('');
+  const [sendWhatsApp, setSendWhatsApp] = useState(true);
+  const [lastPaymentDone, setLastPaymentDone] = useState(null);
   const [busy, setBusy] = useState(false);
   const [currentStudent, setCurrentStudent] = useState(student);
 
@@ -435,6 +557,23 @@ function PaymentModal({ student, onClose, reload }) {
         body: { amount: num, date, note }
       });
       setCurrentStudent(updated);
+
+      const newPayment = { amount: num, date, note };
+      const newTotalPaid = updated.paid || (paidFee + num);
+      const newPending = (updated.pending !== undefined) ? updated.pending : Math.max(0, totalFee - newTotalPaid);
+
+      setLastPaymentDone({
+        payment: newPayment,
+        newPaid: newTotalPaid,
+        newPending,
+        totalFee
+      });
+
+      // Automatically deliver WhatsApp message if option is selected and student has mobile
+      if (sendWhatsApp && currentStudent.mobile) {
+        openPaymentWhatsApp(currentStudent, newPayment, totalFee, newTotalPaid, newPending);
+      }
+
       setAmount('');
       setNote('');
       await reload();
@@ -453,6 +592,7 @@ function PaymentModal({ student, onClose, reload }) {
         method: 'DELETE'
       });
       setCurrentStudent(updated);
+      setLastPaymentDone(null);
       await reload();
     } catch (err) {
       alert(err.message);
@@ -467,20 +607,64 @@ function PaymentModal({ student, onClose, reload }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       zIndex: 1000, padding: 16
     }}>
-      <div className="card" style={{ maxWidth: 520, width: '100%', maxHeight: '92vh', overflowY: 'auto' }}>
+      <div className="card" style={{ maxWidth: 540, width: '100%', maxHeight: '92vh', overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <h3 style={{ margin: 0, color: 'var(--brass)', fontSize: 18 }}>💳 Record Fee Payment</h3>
           <button type="button" className="ghost" style={{ padding: '4px 10px' }} onClick={onClose}>✕</button>
         </div>
 
-        <div style={{ background: 'rgba(212, 162, 76, 0.08)', border: '1px solid var(--line)', borderRadius: 8, padding: '12px 14px', marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: '#fff', marginBottom: 6 }}>{currentStudent.name}</div>
+        <div style={{ background: 'rgba(212, 162, 76, 0.08)', border: '1px solid var(--line)', borderRadius: 8, padding: '12px 14px', marginBottom: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <div style={{ fontWeight: 700, fontSize: 16, color: '#fff' }}>{currentStudent.name}</div>
+            {currentStudent.mobile && (
+              <span style={{ fontSize: 12, color: '#25D366' }}>📱 +91 {currentStudent.mobile.replace(/[^0-9]/g, '').slice(-10)}</span>
+            )}
+          </div>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 13 }}>
             <span>Total Fee: <b>{ru(totalFee)}</b></span>
             <span>Total Paid: <b style={{ color: 'var(--teal)' }}>{ru(paidFee)}</b></span>
             <span>Pending Balance: <b className={pendingFee > 0 ? 'pend' : 'clear'}>{ru(pendingFee)}</b></span>
           </div>
         </div>
+
+        {/* RECENT PAYMENT SUCCESS & WHATSAPP DELIVER BANNER */}
+        {lastPaymentDone && (
+          <div style={{
+            background: 'rgba(37, 211, 102, 0.12)',
+            border: '1px solid #25D366',
+            borderRadius: 8,
+            padding: '12px 14px',
+            marginBottom: 16,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 10
+          }}>
+            <div>
+              <div style={{ color: '#25D366', fontWeight: 700, fontSize: 14 }}>
+                ✓ Payment of {ru(lastPaymentDone.payment.amount)} Recorded!
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text)', opacity: 0.9, marginTop: 2 }}>
+                📅 Date: <b>{formatShortDate(lastPaymentDone.payment.date)}</b> | 
+                Total Paid: <b style={{ color: 'var(--teal)' }}>{ru(lastPaymentDone.newPaid)}</b> | 
+                Remaining Balance: <b className={lastPaymentDone.newPending > 0 ? 'pend' : 'clear'}>{ru(lastPaymentDone.newPending)}</b>
+              </div>
+            </div>
+            {currentStudent.mobile ? (
+              <button
+                type="button"
+                className="wa"
+                style={{ background: '#25D366', color: '#000', fontWeight: 700, padding: '7px 14px', fontSize: 12 }}
+                onClick={() => openPaymentWhatsApp(currentStudent, lastPaymentDone.payment, lastPaymentDone.totalFee, lastPaymentDone.newPaid, lastPaymentDone.newPending)}
+              >
+                💬 Deliver Receipt on WhatsApp
+              </button>
+            ) : (
+              <span style={{ fontSize: 11, color: 'var(--mute)' }}>No mobile number saved</span>
+            )}
+          </div>
+        )}
 
         <h4 style={{ margin: '0 0 8px', color: 'var(--text)', fontSize: 14 }}>Recorded Payment Installments:</h4>
         <div style={{ background: '#0c1519', border: '1px solid var(--line)', borderRadius: 8, padding: 12, marginBottom: 16 }}>
@@ -489,7 +673,7 @@ function PaymentModal({ student, onClose, reload }) {
               {currentStudent.payments.map((p, idx) => (
                 <div key={idx} style={{
                   background: 'rgba(212, 162, 76, 0.12)', border: '1px solid var(--brass)',
-                  borderRadius: 8, padding: '6px 14px', display: 'inline-flex', flexDirection: 'column',
+                  borderRadius: 8, padding: '8px 14px', display: 'inline-flex', flexDirection: 'column',
                   alignItems: 'center', position: 'relative'
                 }}>
                   <button
@@ -507,6 +691,20 @@ function PaymentModal({ student, onClose, reload }) {
                   <span style={{ fontWeight: 700, color: 'var(--brass)', fontSize: 14 }}>{ru(p.amount)}</span>
                   <span style={{ fontSize: 11, color: 'var(--mute)' }}>{formatShortDate(p.date)}</span>
                   {p.note && <span style={{ fontSize: 10, color: 'var(--text)', opacity: 0.85, marginTop: 2 }}>{p.note}</span>}
+                  {currentStudent.mobile && (
+                    <button
+                      type="button"
+                      className="ghost"
+                      title="Deliver WhatsApp Receipt for this payment"
+                      onClick={() => openPaymentWhatsApp(currentStudent, p, totalFee, paidFee, pendingFee)}
+                      style={{
+                        marginTop: 4, padding: '2px 8px', fontSize: 11, color: '#25D366',
+                        borderColor: 'rgba(37, 211, 102, 0.4)', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 4
+                      }}
+                    >
+                      💬 WhatsApp
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -546,6 +744,22 @@ function PaymentModal({ student, onClose, reload }) {
               />
             </label>
           </div>
+
+          {/* WHATSAPP MSG DELIVER OPTION CHECKBOX */}
+          <div style={{ background: 'rgba(37, 211, 102, 0.08)', border: '1px solid rgba(37, 211, 102, 0.3)', borderRadius: 6, padding: '8px 12px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#25D366', margin: 0 }}>
+              <input
+                type="checkbox"
+                checked={sendWhatsApp}
+                onChange={e => setSendWhatsApp(e.target.checked)}
+                style={{ width: 16, height: 16, cursor: 'pointer' }}
+              />
+              <span>
+                💬 <b>Deliver Fees Paid message to WhatsApp</b> on recording (shows Amount Paid, Date & Remaining Balance)
+              </span>
+            </label>
+          </div>
+
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
             <button type="button" className="ghost" onClick={onClose} disabled={busy}>Close</button>
             <button type="submit" disabled={busy || !amount}>{busy ? 'Recording…' : '✓ Record Payment'}</button>
@@ -641,7 +855,15 @@ function StudentProfileModal({ student, onClose, onEdit }) {
           <h4 style={{ margin: '0 0 10px', color: 'var(--brass)', fontSize: 15 }}>💻 Practice Timing & Computer Allocation</h4>
           <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 14 }}>
             <div>Computer: <b style={{ color: 'var(--brass)' }}>{student.computer || 'Not Assigned'}</b></div>
-            <div>Practice Timing: <b>{student.timing || 'Not Assigned'}</b></div>
+            <div>Practice Timing: {getStudentTimings(student.timing).length > 0 ? (
+              <span style={{ marginLeft: 4 }}>
+                {getStudentTimings(student.timing).map((tm, tIdx) => (
+                  <span key={tIdx} style={{ display: 'inline-block', background: 'rgba(31, 111, 104, 0.35)', border: '1px solid var(--teal)', borderRadius: 4, padding: '2px 8px', margin: '2px 4px 2px 0', fontSize: 13, fontWeight: 600 }}>
+                    🕒 {tm}
+                  </span>
+                ))}
+              </span>
+            ) : <b>Not Assigned</b>}</div>
             <div>Batch: <b>{student.batch?.name || 'Unassigned'}</b></div>
           </div>
         </div>
@@ -703,12 +925,15 @@ function ComputerTiming({ students, batches, reload, onOpenProfile, onEditStuden
     if (!targetStudent) return;
     setBusy(true);
     try {
+      const existingTimings = getStudentTimings(targetStudent.timing || targetStudent.timings);
+      const newTimings = Array.from(new Set([...existingTimings, assignTarget.slot]));
       await api(`/students/${targetStudent._id}`, {
         method: 'PUT',
         body: {
           ...targetStudent,
           computer: assignTarget.comp,
-          timing: assignTarget.slot
+          timing: newTimings.join(', '),
+          timings: newTimings
         }
       });
       setAssignTarget(null);
@@ -826,7 +1051,7 @@ function ComputerTiming({ students, batches, reload, onOpenProfile, onEditStuden
                                 <span className="student-name">{st.name}</span>
                               </div>
                               <span className="student-sub">
-                                {st.subjects?.[0]?.name ? `${st.subjects[0].name} ${st.subjects[0].speed || ''} WPM` : (st.batch?.name || 'Practicing')}
+                                {st.subjects?.length > 0 ? st.subjects.map(x => `${x.name}${x.speed ? ' ' + x.speed : ''}`).join(', ') : (st.batch?.name || 'Practicing')}
                               </span>
                             </div>
                           ))
@@ -882,7 +1107,7 @@ function ComputerTiming({ students, batches, reload, onOpenProfile, onEditStuden
                               onClick={() => onOpenProfile ? onOpenProfile(st) : onEditStudent(st)}
                             >
                               <span className="student-name">{st.name}</span>
-                              <span className="student-sub">{st.subjects?.[0]?.name || st.batch?.name || 'Active'}</span>
+                              <span className="student-sub">{st.subjects?.length > 0 ? st.subjects.map(x => x.name).join(', ') : (st.batch?.name || 'Active')}</span>
                             </div>
                           ))
                         ) : (
@@ -1086,10 +1311,27 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
   const currentPaid = f ? (Array.isArray(f.payments) && f.payments.length > 0 ? f.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0) : (Number(f.paid) || 0)) : 0;
   const currentPending = Math.max(0, tot - currentPaid);
 
+  const currentTimings = f ? getStudentTimings(f.timings || f.timing) : [];
+  const addTimingSlot = (slot) => {
+    if (!slot) return;
+    const existing = getStudentTimings(f.timings || f.timing);
+    if (existing.includes(slot)) return;
+    const next = [...existing, slot];
+    setF({ ...f, timings: next, timing: next.join(', ') });
+  };
+  const removeTimingSlot = (slot) => {
+    const existing = getStudentTimings(f.timings || f.timing);
+    const next = existing.filter(s => s !== slot);
+    setF({ ...f, timings: next, timing: next.join(', ') });
+  };
+
   const save = async () => {
     try {
+      const studentTimings = getStudentTimings(f.timings || f.timing);
       const body = {
         ...f,
+        timing: studentTimings.join(', '),
+        timings: studentTimings,
         batch: f.batch || b || batches[0]?._id,
         paid: currentPaid
       };
@@ -1519,13 +1761,6 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
                     ))}
                   </select>
                 </label>
-                <label>Practice Time Slot (Hourly)*
-                  <select value={f.timing || '9:00 AM – 10:00 AM'} onChange={e => setF({ ...f, timing: e.target.value })}>
-                    {TIME_SLOTS.map(slot => (
-                      <option key={slot} value={slot}>{slot}</option>
-                    ))}
-                  </select>
-                </label>
                 <label>Institute Batch
                   <select value={f.batch?._id || f.batch || ''} onChange={e => setF({ ...f, batch: e.target.value })}>
                     <option value="">-- No batch (Unassigned) --</option>
@@ -1534,6 +1769,118 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
                     ))}
                   </select>
                 </label>
+              </div>
+
+              {/* Multiple Practice Time Slots */}
+              <div style={{ marginTop: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--line)', borderRadius: 8, padding: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                  <label style={{ margin: 0, fontWeight: 600, color: 'var(--brass)' }}>
+                    🕒 Practice Time Slot(s) {f.subjects.length > 1 ? `(${f.subjects.length} Subjects: Multiple slots allowed)` : ''}*
+                  </label>
+                  <span style={{ fontSize: 12, color: 'var(--teal)' }}>
+                    {currentTimings.length} Slot{currentTimings.length !== 1 ? 's' : ''} Selected
+                  </span>
+                </div>
+
+                {/* Selected Slots Badges */}
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10, minHeight: 32 }}>
+                  {currentTimings.map((slot, sIdx) => (
+                    <span
+                      key={sIdx}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        background: 'rgba(31, 111, 104, 0.4)',
+                        border: '1px solid var(--teal)',
+                        color: '#fff',
+                        borderRadius: 6,
+                        padding: '4px 10px',
+                        fontSize: 13,
+                        fontWeight: 500
+                      }}
+                    >
+                      🕒 {slot}
+                      <button
+                        type="button"
+                        onClick={() => removeTimingSlot(slot)}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#f87171',
+                          cursor: 'pointer',
+                          padding: 0,
+                          fontSize: 14,
+                          lineHeight: 1,
+                          marginLeft: 4,
+                          fontWeight: 700
+                        }}
+                        title="Remove this slot"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                  {currentTimings.length === 0 && (
+                    <span style={{ fontSize: 12, color: '#f87171', padding: '4px 0' }}>
+                      ⚠️ No time slot selected. Please choose a practice time slot below.
+                    </span>
+                  )}
+                </div>
+
+                {/* Dropdown to add a time slot */}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <select
+                    value=""
+                    onChange={e => {
+                      if (e.target.value) addTimingSlot(e.target.value);
+                    }}
+                    style={{ flex: 1, minWidth: 220 }}
+                  >
+                    <option value="">+ Click to add a time slot...</option>
+                    {TIME_SLOTS.map(slot => (
+                      <option key={slot} value={slot} disabled={currentTimings.includes(slot)}>
+                        {currentTimings.includes(slot) ? `✓ ${slot} (Already selected)` : `+ ${slot}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Quick Toggle Buttons */}
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 11, color: 'var(--mute)', marginBottom: 6 }}>
+                    Quick Select (Click any slot to toggle ON/OFF):
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {TIME_SLOTS.map(slot => {
+                      const isSel = currentTimings.includes(slot);
+                      return (
+                        <button
+                          key={slot}
+                          type="button"
+                          className={isSel ? 'chip-btn active' : 'chip-btn'}
+                          style={{
+                            padding: '3px 8px',
+                            fontSize: 11,
+                            background: isSel ? 'var(--teal)' : 'rgba(255,255,255,0.05)',
+                            color: isSel ? '#fff' : 'var(--text)',
+                            borderColor: isSel ? 'var(--brass)' : 'var(--line)',
+                            fontWeight: isSel ? 600 : 400
+                          }}
+                          onClick={() => isSel ? removeTimingSlot(slot) : addTimingSlot(slot)}
+                        >
+                          {isSel ? '✓ ' : '+ '}{slot}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {f.subjects.length > 1 && (
+                  <div style={{ marginTop: 10, fontSize: 12, color: 'var(--brass)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    💡 Multiple Subjects: This student is enrolled in {f.subjects.length} subjects ({f.subjects.map(s => s.name).join(', ')}). You can assign multiple time slots (e.g. 1 hour per subject) so both slots are reserved in the timetable.
+                  </div>
+                )}
               </div>
 
               {/* Course Subjects & Speeds */}
@@ -1755,10 +2102,26 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
                   {s.computer ? (
                     <div>
                       <b style={{ color: 'var(--brass)' }}>🖥️ {s.computer}</b>
-                      <div style={{ fontSize: 12, color: 'var(--text)' }}>{s.timing || '—'}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text)', marginTop: 2 }}>
+                        {getStudentTimings(s.timing).length > 0 ? (
+                          getStudentTimings(s.timing).map((tm, tIdx) => (
+                            <span key={tIdx} style={{ display: 'inline-block', background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '1px 6px', margin: '2px 3px 2px 0', fontSize: 11 }}>
+                              🕒 {tm}
+                            </span>
+                          ))
+                        ) : '—'}
+                      </div>
                     </div>
                   ) : (
-                    <span style={{ color: 'var(--mute)', fontSize: 12 }}>{s.timing || 'Not assigned'}</span>
+                    <div>
+                      {getStudentTimings(s.timing).length > 0 ? (
+                        getStudentTimings(s.timing).map((tm, tIdx) => (
+                          <span key={tIdx} style={{ display: 'inline-block', background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '1px 6px', margin: '2px 3px 2px 0', fontSize: 11 }}>
+                            🕒 {tm}
+                          </span>
+                        ))
+                      ) : <span style={{ color: 'var(--mute)', fontSize: 12 }}>Not assigned</span>}
+                    </div>
                   )}
                 </td>
                 <td>
@@ -1767,8 +2130,8 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
                 <td><b>{ru(s.total)}</b></td>
                 <td>
                   {/* Payment Amount with date underneath in small box */}
-                  <PaymentBoxes payments={s.payments} paid={s.paid} />
-                  <div style={{ fontSize: 12, marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <PaymentBoxes payments={s.payments} paid={s.paid} student={s} />
+                  <div style={{ fontSize: 12, marginTop: 4, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <span style={{ color: 'var(--mute)' }}>Total: <b style={{ color: 'var(--teal)' }}>{ru(s.paid)}</b></span>
                     <button
                       type="button"
@@ -1779,6 +2142,22 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
                     >
                       + 💳 Pay
                     </button>
+                    {s.mobile && (Number(s.paid) > 0 || (Array.isArray(s.payments) && s.payments.length > 0)) && (
+                      <button
+                        type="button"
+                        className="ghost"
+                        style={{ padding: '2px 7px', fontSize: 11, minHeight: 24, color: '#25D366', borderColor: 'rgba(37, 211, 102, 0.4)' }}
+                        title="Deliver latest fee payment receipt to WhatsApp"
+                        onClick={() => {
+                          const lastP = (Array.isArray(s.payments) && s.payments.length > 0)
+                            ? s.payments[s.payments.length - 1]
+                            : { amount: s.paid, date: s.admissionDate || new Date().toISOString().slice(0, 10), note: 'Fees Paid' };
+                          openPaymentWhatsApp(s, lastP, s.total, s.paid, s.pending);
+                        }}
+                      >
+                        💬 Receipt
+                      </button>
+                    )}
                   </div>
                 </td>
                 <td className={s.pending > 0 ? 'pend' : 'clear'}>
@@ -1799,7 +2178,7 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
                       <button
                         className="ghost"
                         style={{ color: '#25D366', padding: '4px 8px' }}
-                        title="Open WhatsApp Reminder"
+                        title="Open WhatsApp Reminder (Pending Fees)"
                         onClick={() => {
                           const n = s.mobile.replace(/[^0-9]/g, '');
                           const num = n.length === 10 ? '91' + n : n;
@@ -1808,6 +2187,21 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
                         }}
                       >
                         💬
+                      </button>
+                    )}
+                    {s.mobile && (Number(s.paid) > 0 || (Array.isArray(s.payments) && s.payments.length > 0)) && (
+                      <button
+                        className="ghost"
+                        style={{ color: '#128C7E', padding: '4px 8px' }}
+                        title="Deliver Fees Paid Receipt to WhatsApp"
+                        onClick={() => {
+                          const lastP = (Array.isArray(s.payments) && s.payments.length > 0)
+                            ? s.payments[s.payments.length - 1]
+                            : { amount: s.paid, date: s.admissionDate || new Date().toISOString().slice(0, 10), note: 'Fees Paid' };
+                          openPaymentWhatsApp(s, lastP, s.total, s.paid, s.pending);
+                        }}
+                      >
+                        🧾
                       </button>
                     )}
                     <button className="ghost" style={{ padding: '4px 8px' }} onClick={() => setF(s)}>Edit</button>
@@ -1892,6 +2286,7 @@ function Notify({batches, students}){
     if(preset==='std') setBatchTemplate('Dear {name}, your pending fee for DISHA Typing Institute ({batch} batch) is {pending}. (Total: {total}, Paid: {paid}). Kindly clear your balance at the earliest. Thank you!');
     if(preset==='urg') setBatchTemplate('URGENT FEE NOTICE: Dear {name}, your pending balance of {pending} for your {batch} batch typing course is past due. Please settle your dues today.');
     if(preset==='short') setBatchTemplate('Hi {name}! Friendly balance reminder from DISHA Typing Institute ({batch}): your remaining pending fee is {pending}. Thank you!');
+    if(preset==='receipt') setBatchTemplate('Dear {name}, thank you! We have received your fee payment of {lastPaid} on {lastPaymentDate}. Total Course Fee: {total}, Total Paid: {paid}, Remaining Balance: {pending}. DISHA Typing Institute, Jalna');
   };
 
   const openSingleWA = (student) => {
@@ -1956,7 +2351,7 @@ function Notify({batches, students}){
 
       <div style={{fontSize:12,color:'var(--mute)',marginBottom:4}}>Click placeholder tag to insert:</div>
       <div className="chip-bar">
-        {['{name}', '{pending}', '{paid}', '{total}', '{batch}', '{timing}'].map(chip=>
+        {['{name}', '{pending}', '{paid}', '{total}', '{lastPaid}', '{lastPaymentDate}', '{batch}', '{timing}'].map(chip=>
           <button key={chip} type="button" className="chip-btn" onClick={()=>insertChip(chip)}>+ {chip}</button>
         )}
       </div>
@@ -1966,6 +2361,7 @@ function Notify({batches, students}){
         <button type="button" className="ghost" style={{fontSize:12,padding:'3px 8px'}} onClick={()=>applyPreset('std')}>Standard Fee Reminder</button>
         <button type="button" className="ghost" style={{fontSize:12,padding:'3px 8px'}} onClick={()=>applyPreset('urg')}>Urgent Dues Notice</button>
         <button type="button" className="ghost" style={{fontSize:12,padding:'3px 8px'}} onClick={()=>applyPreset('short')}>Short WhatsApp</button>
+        <button type="button" className="ghost" style={{fontSize:12,padding:'3px 8px',color:'#25D366',borderColor:'rgba(37, 211, 102, 0.4)'}} onClick={()=>applyPreset('receipt')}>🧾 Fee Payment Receipt</button>
       </div>
 
       {previewList.length > 0 && <div className="preview-card">
@@ -2043,6 +2439,8 @@ function CloudBackup({ userEmail, reload }){
   const [statusMsg, setStatusMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [customLabel, setCustomLabel] = useState('');
+  const [autoBackupEnabled, setAutoBackupEnabled] = useState(true);
+  const [togglingAuto, setTogglingAuto] = useState(false);
   const fileInputRef = useRef(null);
 
   const loadBackups = useCallback(async () => {
@@ -2054,7 +2452,33 @@ function CloudBackup({ userEmail, reload }){
     }
   }, []);
 
-  useEffect(() => { loadBackups(); }, [loadBackups]);
+  const loadAutoStatus = useCallback(async () => {
+    try {
+      const res = await api('/backup/auto-status');
+      if (res && typeof res.autoBackup === 'boolean') {
+        setAutoBackupEnabled(res.autoBackup);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    loadBackups();
+    loadAutoStatus();
+  }, [loadBackups, loadAutoStatus]);
+
+  const handleToggleAutoBackup = async () => {
+    setTogglingAuto(true);
+    const targetState = !autoBackupEnabled;
+    try {
+      await api('/backup/auto-status', { method: 'PUT', body: { enabled: targetState } });
+      setAutoBackupEnabled(targetState);
+      setStatusMsg(targetState ? '✓ Automatic cloud backup is now ON. Changes will automatically sync to cloud snapshots.' : '⚠️ Automatic cloud backup has been turned OFF. Backups will only be created when you manually click "Create Cloud Backup Now".');
+    } catch (err) {
+      setErrorMsg('Failed to update auto backup setting: ' + err.message);
+    } finally {
+      setTogglingAuto(false);
+    }
+  };
 
   const handleCreateBackup = async () => {
     setBusy(true); setErrorMsg(''); setStatusMsg('');
@@ -2138,9 +2562,29 @@ function CloudBackup({ userEmail, reload }){
             You can reinstall the app or log in on a new device anytime to restore your data.
           </p>
         </div>
-        <span className="status-badge sent" style={{fontSize:13,padding:'4px 12px'}}>
-          ✓ Auto Cloud Sync Enabled
-        </span>
+        <button
+          type="button"
+          onClick={handleToggleAutoBackup}
+          disabled={togglingAuto}
+          style={{
+            background: autoBackupEnabled ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+            border: `1px solid ${autoBackupEnabled ? '#22c55e' : '#ef4444'}`,
+            color: autoBackupEnabled ? '#4ade80' : '#f87171',
+            padding: '6px 14px',
+            borderRadius: 20,
+            cursor: 'pointer',
+            fontWeight: 600,
+            fontSize: 13,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            transition: 'all 0.2s'
+          }}
+          title="Click to toggle automatic cloud backup on or off"
+        >
+          <span>{autoBackupEnabled ? '🟢' : '🔴'}</span>
+          <span>Auto Cloud Backup: <strong>{autoBackupEnabled ? 'ON' : 'OFF'}</strong> (Click to {autoBackupEnabled ? 'Turn OFF' : 'Turn ON'})</span>
+        </button>
       </div>
 
       <div className="bar" style={{alignItems:'flex-end'}}>
@@ -2475,6 +2919,8 @@ export default function App() {
   const [cloudCheck, setCloudCheck] = useState(null);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [showServerModal, setShowServerModal] = useState(false);
+  const [studentToEdit, setStudentToEdit] = useState(null);
+  const [selectedProfile, setSelectedProfile] = useState(null);
 
   useEffect(() => {
     const handler = (e) => {
@@ -2542,9 +2988,6 @@ export default function App() {
       {showServerModal && <ServerConfigModal onClose={() => setShowServerModal(false)} />}
     </>
   );
-
-  const [studentToEdit, setStudentToEdit] = useState(null);
-  const [selectedProfile, setSelectedProfile] = useState(null);
 
   const navTabs = [
     { id: 'home', label: 'Home', short: 'Home', icon: '🏠' },

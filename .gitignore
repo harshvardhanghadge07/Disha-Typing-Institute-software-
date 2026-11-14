@@ -6,6 +6,9 @@ frontend/node_modules/
 # Production builds
 frontend/dist/
 dist-electron/
+dist-setup/
+*.zip
+*.exe
 
 # Environment & Sensitive keys
 .env

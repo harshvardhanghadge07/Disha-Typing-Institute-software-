@@ -24,7 +24,7 @@
     "asar": false,
     "directories": {
       "buildResources": "electron/assets",
-      "output": "dist-electron"
+      "output": "dist-setup"
     },
     "files": [
       "electron/**/*",
@@ -40,7 +40,8 @@
         "nsis"
       ],
       "icon": "electron/assets/icon.ico",
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "signExecutable": false
     },
     "nsis": {
       "oneClick": false,

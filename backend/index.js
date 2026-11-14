@@ -1,15 +1,32 @@
-import 'dotenv/config';import express from 'express';import mongoose from 'mongoose';import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';import multer from 'multer';import nodemailer from 'nodemailer';import helmet from 'helmet';import cors from 'cors';
-import rateLimit from 'express-rate-limit';import fs from 'fs';import path from 'path';import crypto from 'crypto';import {fileURLToPath} from 'url';
+import dotenv from 'dotenv';
+import express from 'express';
+import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import multer from 'multer';
+import nodemailer from 'nodemailer';
+import helmet from 'helmet';
+import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import {fileURLToPath} from 'url';
 
-const __dir=path.dirname(fileURLToPath(import.meta.url)),S=process.env.JWT_SECRET||'dev-secret',UP=path.join(__dir,'private-uploads');
+const __dir=path.dirname(fileURLToPath(import.meta.url));
+
+// Explicitly load environment variables from backend directory and root
+dotenv.config({ path: path.join(__dir, '.env') });
+dotenv.config({ path: path.join(__dir, '..', '.env') });
+
+const S=process.env.JWT_SECRET||'dev-secret',UP=path.join(__dir,'private-uploads');
 fs.mkdirSync(UP,{recursive:true});
 const m=mongoose,M=(n,s)=>m.model(n,new m.Schema(s,{timestamps:true}));
 const User=M('User',{email:{type:String,unique:true},hash:String,role:{type:String,default:'staff'}});
 const Batch=M('Batch',{name:{type:String,unique:true},start:String});
 const Setting=M('Setting',{key:{type:String,unique:true},value:m.Schema.Types.Mixed});
 const Student=M('Student',{
-  name:String,mobile:String,email:String,timing:String,computer:String,batch:{type:m.Schema.Types.ObjectId,ref:'Batch'},
+  name:String,mobile:String,email:String,timing:String,timings:[String],computer:String,batch:{type:m.Schema.Types.ObjectId,ref:'Batch'},
   subjects:[{name:String,speed:Number}],paid:{type:Number,default:0},total:Number,
   payments:[{amount:Number,date:String,note:String,createdAt:{type:Date,default:Date.now}}],
   grNo:String,motherName:String,gender:String,dob:String,admissionDate:String,qualification:String,address:String,aadharNo:String,photo:String
@@ -100,6 +117,11 @@ const restoreBackupData = async (data) => {
 };
 const autoBackupTrigger = async (userId, email) => {
   try {
+    const autoSetting = await Setting.findOne({ key: 'auto_backup' });
+    if (autoSetting && autoSetting.value === false) {
+      console.log('[backup] Automatic cloud backup is turned OFF.');
+      return;
+    }
     const data = await generateBackupData();
     const enc = encryptBackup(data);
     await Backup.create({
@@ -125,6 +147,30 @@ const app=express();app.use(cors());app.use(express.json({limit:'50mb'}));
 const upload=multer({storage:multer.diskStorage({destination:UP,filename:(q,f,cb)=>cb(null,crypto.randomBytes(24).toString('hex')+'.pdf')}),
  limits:{fileSize:10e6},fileFilter:(q,f,cb)=>cb(f.mimetype==='application/pdf'?null:new Error('Only PDF files are allowed'),f.mimetype==='application/pdf')});
 const api=express.Router();
+
+const waitForDb = async (timeoutMs = 15000) => {
+  if (m.connection.readyState === 1) return true;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (m.connection.readyState === 1) return true;
+    await new Promise(res => setTimeout(res, 200));
+  }
+  return m.connection.readyState === 1;
+};
+
+// Ensure database is connected before handling queries
+api.use(async (q, r, next) => {
+  if (q.path === '/health') return next();
+  if (m.connection.readyState !== 1) {
+    const ok = await waitForDb(12000);
+    if (!ok) {
+      return r.status(503).json({
+        error: 'Connecting to cloud database... Please check your internet connection and try again.'
+      });
+    }
+  }
+  next();
+});
 
 api.post('/login',rateLimit({windowMs:15*60e3,max:100,message:{error:'Too many login attempts. Please wait a few minutes.'}}),wrap(async(q,r)=>{const u=await User.findOne({email:String(q.body.email).toLowerCase()});
  if(!u||!await bcrypt.compare(String(q.body.password),u.hash))return r.status(401).json({error:'Wrong email or password.'});
@@ -235,6 +281,11 @@ api.get('/students',wrap(async(q,r)=>{const f={};if(q.query.batch)f.batch=q.quer
 api.post('/students',wrap(async(q,r)=>{
  const b={...q.body};
  if(!b.batch) delete b.batch;
+ if (Array.isArray(b.timings) && b.timings.length > 0) {
+   b.timing = b.timings.filter(Boolean).join(', ');
+ } else if (b.timing) {
+   b.timings = String(b.timing).split(/[,;|\n]+/).map(s => s.trim()).filter(Boolean);
+ }
  if (Array.isArray(b.payments) && b.payments.length > 0) {
    b.paid = b.payments.reduce((sum, p) => sum + (Number(p?.amount) || 0), 0);
  } else if (Number(b.paid) > 0) {
@@ -247,6 +298,11 @@ api.post('/students',wrap(async(q,r)=>{
 
 api.put('/students/:id',wrap(async(q,r)=>{
  const b={...q.body};
+ if (Array.isArray(b.timings) && b.timings.length > 0) {
+   b.timing = b.timings.filter(Boolean).join(', ');
+ } else if (b.timing) {
+   b.timings = String(b.timing).split(/[,;|\n]+/).map(s => s.trim()).filter(Boolean);
+ }
  if (Array.isArray(b.payments) && b.payments.length > 0) {
    b.paid = b.payments.reduce((sum, p) => sum + (Number(p?.amount) || 0), 0);
  } else if (Number(b.paid) > 0 && (!b.payments || b.payments.length === 0)) {
@@ -335,11 +391,18 @@ api.post('/notify/batch-preview', wrap(async(q,r)=>{
   
   const list = students.map(s => {
     const pend = (s.total || 0) - (s.paid || 0);
+    const lastP = (Array.isArray(s.payments) && s.payments.length > 0) ? s.payments[s.payments.length - 1] : null;
+    const lastPaidStr = lastP ? formatRu(lastP.amount) : formatRu(s.paid || 0);
+    const lastDateStr = lastP?.date ? new Date(lastP.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+    const lastNoteStr = lastP?.note || '';
     const msg = tpl
       .replace(/\{name\}/g, s.name || '')
       .replace(/\{pending\}/g, formatRu(pend))
       .replace(/\{paid\}/g, formatRu(s.paid || 0))
       .replace(/\{total\}/g, formatRu(s.total || 0))
+      .replace(/\{lastPaid\}/g, lastPaidStr)
+      .replace(/\{lastPaymentDate\}/g, lastDateStr)
+      .replace(/\{lastNote\}/g, lastNoteStr)
       .replace(/\{batch\}/g, s.batch?.name || 'Current')
       .replace(/\{timing\}/g, s.timing || '');
     return {
@@ -375,11 +438,18 @@ api.post('/notify/batch-send', wrap(async(q,r)=>{
 
   for (const s of students) {
     const pend = (s.total || 0) - (s.paid || 0);
+    const lastP = (Array.isArray(s.payments) && s.payments.length > 0) ? s.payments[s.payments.length - 1] : null;
+    const lastPaidStr = lastP ? formatRu(lastP.amount) : formatRu(s.paid || 0);
+    const lastDateStr = lastP?.date ? new Date(lastP.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+    const lastNoteStr = lastP?.note || '';
     const msg = tpl
       .replace(/\{name\}/g, s.name || '')
       .replace(/\{pending\}/g, formatRu(pend))
       .replace(/\{paid\}/g, formatRu(s.paid || 0))
       .replace(/\{total\}/g, formatRu(s.total || 0))
+      .replace(/\{lastPaid\}/g, lastPaidStr)
+      .replace(/\{lastPaymentDate\}/g, lastDateStr)
+      .replace(/\{lastNote\}/g, lastNoteStr)
       .replace(/\{batch\}/g, s.batch?.name || 'Current')
       .replace(/\{timing\}/g, s.timing || '');
 
@@ -519,6 +589,17 @@ api.get('/backup/check-cloud', wrap(async(q,r)=>{
   });
 }));
 
+api.get('/backup/auto-status', wrap(async(q,r)=>{
+  const setting = await Setting.findOne({ key: 'auto_backup' });
+  r.json({ autoBackup: setting?.value !== false });
+}));
+
+api.put('/backup/auto-status', wrap(async(q,r)=>{
+  const enabled = Boolean(q.body.enabled);
+  await Setting.findOneAndUpdate({ key: 'auto_backup' }, { value: enabled }, { upsert: true });
+  r.json({ ok: true, autoBackup: enabled });
+}));
+
 // --- DOCS ENDPOINTS ---
 api.post('/docs/unlock',rateLimit({windowMs:15*60e3,max:10}),wrap(async(q,r)=>{const p=await Setting.findOne({key:'pin'});
  if(!await bcrypt.compare(String(q.body.pin),p.value))return r.status(403).json({error:'Wrong PIN.'});
@@ -552,18 +633,91 @@ api.delete('/docs/:id',docAuth,wrap(async(q,r)=>{
   r.json({ok:true});
 }));
 
-app.use('/api',api);
-const dist=path.join(__dir,'../frontend/dist');if(fs.existsSync(dist)){app.use(express.static(dist));app.get('*',(q,r)=>r.sendFile(path.join(dist,'index.html')))}
-await m.connect(process.env.MONGO_URI||'mongodb://127.0.0.1:27017/disha');
-if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
-  const adminEmail = process.env.ADMIN_EMAIL.toLowerCase();
-  const adminHash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 12);
-  await User.findOneAndUpdate({email:adminEmail},{email:adminEmail,hash:adminHash,role:'admin'},{upsert:true});
+app.get('/api/health', (q, r) => r.json({ ok: true, db: m.connection.readyState === 1 }));
+app.use('/api', api);
+
+const dist = path.join(__dir, '../frontend/dist');
+if (fs.existsSync(dist)) {
+  app.use(express.static(dist, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      }
+    }
+  }));
+  app.get('*', (q, r) => {
+    r.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    r.sendFile(path.join(dist, 'index.html'));
+  });
 }
-if(!await Setting.findOne({key:'pin'}))await Setting.create({key:'pin',value:await bcrypt.hash(process.env.DOC_PIN||'123456',12)});
-if(!await Batch.countDocuments())await Batch.insertMany(['2026-06','2026-12','2027-06','2027-12'].map(d=>({start:d,name:new Date(d+'-01').toLocaleString('en',{month:'long',year:'numeric'})})));
-const srv = app.listen(process.env.PORT||5000, '0.0.0.0', ()=>console.log('DISHA running on :'+(process.env.PORT||5000)));
+
+// Start Express server immediately so UI and static assets load in < 100ms
+const srv = app.listen(process.env.PORT || 5000, '0.0.0.0', () => {
+  console.log('DISHA running on :' + (process.env.PORT || 5000));
+});
 srv.on('error', err => {
-  if (err.code === 'EADDRINUSE') console.log('Port ' + (process.env.PORT||5000) + ' is already active.');
+  if (err.code === 'EADDRINUSE') console.log('Port ' + (process.env.PORT || 5000) + ' is already active.');
   else console.error(err);
 });
+
+// Connect to MongoDB and initialize defaults in background without blocking server boot
+async function initDbDefaults() {
+  try {
+    if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+      const adminEmail = process.env.ADMIN_EMAIL.toLowerCase();
+      const existing = await User.findOne({ email: adminEmail });
+      if (!existing) {
+        const adminHash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 10);
+        await User.create({ email: adminEmail, hash: adminHash, role: 'admin' });
+        console.log('[db] Initialized admin user:', adminEmail);
+      }
+    }
+
+    const pinSetting = await Setting.findOne({ key: 'pin' });
+    if (!pinSetting) {
+      const pinHash = await bcrypt.hash(process.env.DOC_PIN || '123456', 10);
+      await Setting.create({ key: 'pin', value: pinHash });
+    }
+
+    const batchCount = await Batch.countDocuments();
+    if (!batchCount) {
+      await Batch.insertMany(['2026-06', '2026-12', '2027-06', '2027-12'].map(d => ({
+        start: d,
+        name: new Date(d + '-01').toLocaleString('en', { month: 'long', year: 'numeric' })
+      })));
+    }
+  } catch (e) {
+    console.error('[db] Error setting up defaults:', e.message);
+  }
+}
+
+let isConnecting = false;
+async function connectDB() {
+  if (isConnecting || m.connection.readyState === 1) return;
+  isConnecting = true;
+  const uri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/disha';
+  try {
+    console.log('[db] Connecting to MongoDB...');
+    await m.connect(uri, {
+      serverSelectionTimeoutMS: 30000,
+      connectTimeoutMS: 30000,
+    });
+    console.log('[db] Connected to database');
+    await initDbDefaults();
+  } catch (err) {
+    console.error('[db] Database connection error:', err.message);
+    setTimeout(() => {
+      isConnecting = false;
+      connectDB();
+    }, 3000);
+    return;
+  }
+  isConnecting = false;
+}
+
+m.connection.on('disconnected', () => {
+  console.log('[db] MongoDB disconnected. Reconnecting...');
+  setTimeout(connectDB, 3000);
+});
+
+connectDB();

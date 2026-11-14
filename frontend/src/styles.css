@@ -28,18 +28,26 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-h1, h2, h3, .brand {
+h1,
+h2,
+h3,
+.brand {
   font-family: 'Special Elite', serif;
   font-weight: 400;
   margin: 0;
 }
 
-input, select, textarea, button {
+input,
+select,
+textarea,
+button {
   font: inherit;
   color: inherit;
 }
 
-input, select, textarea {
+input,
+select,
+textarea {
   background: #0c1519;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -49,7 +57,9 @@ input, select, textarea {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-input:focus, select:focus, textarea:focus {
+input:focus,
+select:focus,
+textarea:focus {
   outline: none;
   border-color: var(--brass);
   box-shadow: 0 0 0 2px rgba(212, 162, 76, 0.25);
@@ -129,7 +139,7 @@ label {
   margin-bottom: 12px;
 }
 
-label > * {
+label>* {
   margin-top: 6px;
 }
 
@@ -302,7 +312,7 @@ main {
   flex-wrap: wrap;
 }
 
-.bar > * {
+.bar>* {
   width: auto;
   flex: 1;
   min-width: 160px;
@@ -320,7 +330,8 @@ table {
   overflow: hidden;
 }
 
-th, td {
+th,
+td {
   padding: 12px 14px;
   text-align: left;
   border-bottom: 1px solid var(--line);
@@ -546,6 +557,7 @@ th {
    📱 DEDICATED RESPONSIVE & MOBILE STYLES (Screen Width <= 820px)
    ========================================================================== */
 @media (max-width: 820px) {
+
   /* Hide heavy 3D canvases on phones to avoid touch capture and speed up rendering */
   .stage {
     display: none !important;
@@ -762,7 +774,7 @@ th {
     margin: 12px 0;
   }
 
-  .bar > * {
+  .bar>* {
     width: 100% !important;
     min-width: 0 !important;
   }
@@ -777,8 +789,11 @@ th {
     gap: 8px;
   }
 
-  input, select, textarea {
-    font-size: 16px; /* Prevents auto-zoom on iOS */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+    /* Prevents auto-zoom on iOS */
     min-height: 44px;
   }
 
@@ -792,7 +807,8 @@ th {
     min-width: 580px;
   }
 
-  th, td {
+  th,
+  td {
     padding: 10px 12px;
     font-size: 13px;
     white-space: nowrap;
@@ -857,26 +873,31 @@ th {
   gap: 12px;
   margin-bottom: 16px;
 }
+
 .timetable-wrapper {
   overflow-x: auto;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
   margin-bottom: 24px;
 }
+
 .timetable-grid {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
   min-width: 880px;
 }
-.timetable-grid th, .timetable-grid td {
+
+.timetable-grid th,
+.timetable-grid td {
   border: 1px solid var(--line);
   padding: 8px 10px;
   text-align: center;
   vertical-align: middle;
 }
+
 .timetable-grid th {
   background: #0f1b22;
   color: var(--brass);
@@ -886,6 +907,7 @@ th {
   top: 0;
   z-index: 2;
 }
+
 .timetable-grid th.time-col {
   width: 140px;
   min-width: 130px;
@@ -893,6 +915,7 @@ th {
   color: var(--text);
   text-align: left;
 }
+
 .timetable-grid td.time-cell {
   background: rgba(15, 27, 34, 0.7);
   font-weight: 600;
@@ -901,6 +924,7 @@ th {
   text-align: left;
   white-space: nowrap;
 }
+
 .timetable-grid td.comp-slot {
   height: 64px;
   min-width: 120px;
@@ -908,9 +932,11 @@ th {
   transition: background 0.15s ease;
   position: relative;
 }
+
 .timetable-grid td.comp-slot:hover {
   background: rgba(212, 162, 76, 0.08);
 }
+
 .student-slot-chip {
   background: linear-gradient(135deg, rgba(212, 162, 76, 0.22), rgba(63, 181, 163, 0.2));
   border: 1px solid var(--brass);
@@ -921,10 +947,12 @@ th {
   cursor: pointer;
   transition: transform 0.1s ease, box-shadow 0.1s ease;
 }
+
 .student-slot-chip:hover {
   transform: translateY(-1px);
   box-shadow: 0 2px 8px rgba(212, 162, 76, 0.3);
 }
+
 .student-slot-chip .student-name {
   font-weight: 700;
   font-size: 13px;
@@ -934,11 +962,13 @@ th {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .student-slot-chip .student-sub {
   font-size: 11px;
   color: var(--brass);
   display: block;
 }
+
 .empty-slot-btn {
   background: transparent;
   border: 1px dashed rgba(141, 160, 166, 0.3);
@@ -951,6 +981,7 @@ th {
   min-height: 32px;
   transition: all 0.15s ease;
 }
+
 .empty-slot-btn:hover {
   border-color: var(--brass);
   color: var(--brass);
@@ -964,6 +995,7 @@ th {
   gap: 6px;
   align-items: center;
 }
+
 .payment-box {
   background: rgba(212, 162, 76, 0.12);
   border: 1px solid rgba(212, 162, 76, 0.45);
@@ -977,18 +1009,37 @@ th {
   line-height: 1.25;
   transition: transform 0.1s ease;
 }
+
 .payment-box:hover {
   background: rgba(212, 162, 76, 0.22);
 }
+
 .payment-box .p-amt {
   font-weight: 700;
   color: var(--brass);
   font-size: 13px;
 }
+
 .payment-box .p-date {
   font-size: 11px;
   color: var(--mute);
   margin-top: 1px;
+}
+
+.payment-box .p-wa-btn {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin-top: 2px;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.75;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.payment-box .p-wa-btn:hover {
+  opacity: 1;
+  transform: scale(1.2);
 }
 
 /* --- PASSPORT PHOTO UPLOAD & PREVIEW --- */
@@ -998,6 +1049,7 @@ th {
   align-items: center;
   gap: 8px;
 }
+
 .passport-photo-box {
   width: 120px;
   height: 150px;
@@ -1013,15 +1065,18 @@ th {
   overflow: hidden;
   transition: border-color 0.2s ease, background 0.2s ease;
 }
+
 .passport-photo-box:hover {
   border-color: var(--brass);
   background: rgba(212, 162, 76, 0.08);
 }
+
 .passport-photo-box img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
+
 .passport-photo-placeholder {
   display: flex;
   flex-direction: column;
@@ -1031,10 +1086,12 @@ th {
   padding: 8px;
   font-size: 12px;
 }
+
 .passport-photo-placeholder span {
   font-size: 28px;
   margin-bottom: 4px;
 }
+
 .student-avatar {
   width: 38px;
   height: 38px;
@@ -1070,10 +1127,12 @@ th {
   user-select: none;
   transition: color 0.15s ease, background-color 0.15s ease;
 }
+
 .sortable-th:hover {
   color: var(--brass) !important;
   background-color: rgba(212, 162, 76, 0.1) !important;
 }
+
 .sort-badge {
   display: inline-block;
   margin-left: 6px;
@@ -1081,5 +1140,3 @@ th {
   color: var(--brass);
   opacity: 0.85;
 }
-
-
