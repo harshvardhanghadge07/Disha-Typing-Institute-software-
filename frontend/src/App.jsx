@@ -378,18 +378,40 @@ const formatShortDate = (d) => {
   return String(d).slice(0, 10);
 };
 
-const getStudentTimings = (studentTiming) => {
-  if (!studentTiming) return [];
-  if (Array.isArray(studentTiming)) return studentTiming.map(s => String(s).trim()).filter(Boolean);
-  return String(studentTiming).split(/[,;|\n]+/).map(s => s.trim()).filter(Boolean);
+const getStudentTimings = (studentOrTiming) => {
+  if (!studentOrTiming) return [];
+  if (typeof studentOrTiming === 'object' && !Array.isArray(studentOrTiming)) {
+    const list = [];
+    if (Array.isArray(studentOrTiming.subjects)) {
+      studentOrTiming.subjects.forEach(sub => {
+        if (sub?.timing) list.push(sub.timing);
+      });
+    }
+    if (Array.isArray(studentOrTiming.timings)) {
+      list.push(...studentOrTiming.timings);
+    }
+    if (studentOrTiming.timing) {
+      list.push(...String(studentOrTiming.timing).split(/[,;|\n]+/));
+    }
+    return [...new Set(list.map(s => String(s).trim()).filter(Boolean))];
+  }
+  if (Array.isArray(studentOrTiming)) return [...new Set(studentOrTiming.map(s => String(s).trim()).filter(Boolean))];
+  return [...new Set(String(studentOrTiming).split(/[,;|\n]+/).map(s => s.trim()).filter(Boolean))];
 };
 
-const matchTimingSlot = (studentTiming, slot) => {
-  if (!studentTiming || !slot) return false;
-  const list = getStudentTimings(studentTiming);
+const matchTimingSlot = (studentOrTiming, slot) => {
+  if (!studentOrTiming || !slot) return false;
+  const list = getStudentTimings(studentOrTiming);
   const clean = s => s.toLowerCase().replace(/\s+/g, '').replace(/–/g, '-').replace(/:00/g, '');
   const sl = clean(slot);
   return list.some(st => clean(st) === sl);
+};
+
+const getSubjectForSlot = (student, slot) => {
+  if (!student || !slot || !Array.isArray(student.subjects)) return null;
+  const clean = s => s.toLowerCase().replace(/\s+/g, '').replace(/–/g, '-').replace(/:00/g, '');
+  const sl = clean(slot);
+  return student.subjects.find(sub => sub?.timing && clean(sub.timing) === sl) || null;
 };
 
 const matchComputer = (studentComp, comp) => {
@@ -806,8 +828,19 @@ function StudentProfileModal({ student, onClose, onEdit }) {
               <span style={{ color: 'var(--brass)', fontWeight: 600 }}>4. Mother's Name:</span>
               <span>{student.motherName || '—'}</span>
 
-              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>5. Subject(s):</span>
-              <span>{student.subjects?.map(s => `${s.name} (${s.speed} WPM)`).join(', ') || '—'}</span>
+              <span style={{ color: 'var(--brass)', fontWeight: 600 }}>5. Subject(s) & Timings:</span>
+              <div>
+                {student.subjects?.map((s, idx) => (
+                  <div key={idx} style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span><b>📘 {s.name}</b> ({s.speed} WPM)</span>
+                    {s.timing && (
+                      <span style={{ background: 'rgba(31, 111, 104, 0.4)', border: '1px solid var(--teal)', borderRadius: 4, padding: '1px 6px', fontSize: 12, color: '#fff' }}>
+                        🕒 {s.timing}
+                      </span>
+                    )}
+                  </div>
+                )) || '—'}
+              </div>
 
               <span style={{ color: 'var(--brass)', fontWeight: 600 }}>7. Gender:</span>
               <span>{student.gender || '—'}</span>
@@ -855,13 +888,21 @@ function StudentProfileModal({ student, onClose, onEdit }) {
           <h4 style={{ margin: '0 0 10px', color: 'var(--brass)', fontSize: 15 }}>💻 Practice Timing & Computer Allocation</h4>
           <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 14 }}>
             <div>Computer: <b style={{ color: 'var(--brass)' }}>{student.computer || 'Not Assigned'}</b></div>
-            <div>Practice Timing: {getStudentTimings(student.timing).length > 0 ? (
+            <div>Practice Timing: {getStudentTimings(student).length > 0 ? (
               <span style={{ marginLeft: 4 }}>
-                {getStudentTimings(student.timing).map((tm, tIdx) => (
-                  <span key={tIdx} style={{ display: 'inline-block', background: 'rgba(31, 111, 104, 0.35)', border: '1px solid var(--teal)', borderRadius: 4, padding: '2px 8px', margin: '2px 4px 2px 0', fontSize: 13, fontWeight: 600 }}>
-                    🕒 {tm}
-                  </span>
-                ))}
+                {student.subjects?.some(s => s.timing) ? (
+                  student.subjects.filter(s => s.timing).map((s, tIdx) => (
+                    <span key={tIdx} style={{ display: 'inline-block', background: 'rgba(31, 111, 104, 0.35)', border: '1px solid var(--teal)', borderRadius: 4, padding: '2px 8px', margin: '2px 4px 2px 0', fontSize: 13, fontWeight: 600 }}>
+                      📘 {s.name}: 🕒 {s.timing}
+                    </span>
+                  ))
+                ) : (
+                  getStudentTimings(student).map((tm, tIdx) => (
+                    <span key={tIdx} style={{ display: 'inline-block', background: 'rgba(31, 111, 104, 0.35)', border: '1px solid var(--teal)', borderRadius: 4, padding: '2px 8px', margin: '2px 4px 2px 0', fontSize: 13, fontWeight: 600 }}>
+                      🕒 {tm}
+                    </span>
+                  ))
+                )}
               </span>
             ) : <b>Not Assigned</b>}</div>
             <div>Batch: <b>{student.batch?.name || 'Unassigned'}</b></div>
@@ -911,7 +952,7 @@ function ComputerTiming({ students, batches, reload, onOpenProfile, onEditStuden
   let occupiedCount = 0;
   TIME_SLOTS.forEach(slot => {
     COMPUTERS.forEach(comp => {
-      const has = students.some(s => matchComputer(s.computer, comp) && matchTimingSlot(s.timing, slot));
+      const has = students.some(s => matchComputer(s.computer, comp) && matchTimingSlot(s, slot));
       if (has) occupiedCount++;
     });
   });
@@ -1031,30 +1072,33 @@ function ComputerTiming({ students, batches, reload, onOpenProfile, onEditStuden
                     <b>{slot}</b>
                   </td>
                   {COMPUTERS.map(comp => {
-                    const matched = filteredStudents.filter(s => matchComputer(s.computer, comp) && matchTimingSlot(s.timing, slot));
+                    const matched = filteredStudents.filter(s => matchComputer(s.computer, comp) && matchTimingSlot(s, slot));
                     return (
                       <td key={comp} className="comp-slot">
                         {matched.length > 0 ? (
-                          matched.map(st => (
-                            <div
-                              key={st._id}
-                              className="student-slot-chip"
-                              title={`Click to view profile of ${st.name} (${comp} · ${slot})`}
-                              onClick={() => onOpenProfile ? onOpenProfile(st) : onEditStudent(st)}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                {st.photo ? (
-                                  <img src={st.photo} alt={st.name} style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover' }} />
-                                ) : (
-                                  <span style={{ fontSize: 12 }}>👤</span>
-                                )}
-                                <span className="student-name">{st.name}</span>
+                          matched.map(st => {
+                            const subForSlot = getSubjectForSlot(st, slot);
+                            return (
+                              <div
+                                key={st._id}
+                                className="student-slot-chip"
+                                title={`Click to view profile of ${st.name} (${comp} · ${slot})`}
+                                onClick={() => onOpenProfile ? onOpenProfile(st) : onEditStudent(st)}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  {st.photo ? (
+                                    <img src={st.photo} alt={st.name} style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover' }} />
+                                  ) : (
+                                    <span style={{ fontSize: 12 }}>👤</span>
+                                  )}
+                                  <span className="student-name">{st.name}</span>
+                                </div>
+                                <span className="student-sub">
+                                  {subForSlot ? `📘 ${subForSlot.name}${subForSlot.speed ? ' ' + subForSlot.speed + ' WPM' : ''}` : (st.subjects?.length > 0 ? st.subjects.map(x => `${x.name}${x.speed ? ' ' + x.speed : ''}`).join(', ') : (st.batch?.name || 'Practicing'))}
+                                </span>
                               </div>
-                              <span className="student-sub">
-                                {st.subjects?.length > 0 ? st.subjects.map(x => `${x.name}${x.speed ? ' ' + x.speed : ''}`).join(', ') : (st.batch?.name || 'Practicing')}
-                              </span>
-                            </div>
-                          ))
+                            );
+                          })
                         ) : (
                           <button
                             type="button"
@@ -1096,20 +1140,23 @@ function ComputerTiming({ students, batches, reload, onOpenProfile, onEditStuden
                     <div style={{ fontSize: 15, color: 'var(--brass)', fontWeight: 700 }}>🖥️ {comp}</div>
                   </td>
                   {TIME_SLOTS.map(slot => {
-                    const matched = filteredStudents.filter(s => matchComputer(s.computer, comp) && matchTimingSlot(s.timing, slot));
+                    const matched = filteredStudents.filter(s => matchComputer(s.computer, comp) && matchTimingSlot(s, slot));
                     return (
                       <td key={slot} className="comp-slot">
                         {matched.length > 0 ? (
-                          matched.map(st => (
-                            <div
-                              key={st._id}
-                              className="student-slot-chip"
-                              onClick={() => onOpenProfile ? onOpenProfile(st) : onEditStudent(st)}
-                            >
-                              <span className="student-name">{st.name}</span>
-                              <span className="student-sub">{st.subjects?.length > 0 ? st.subjects.map(x => x.name).join(', ') : (st.batch?.name || 'Active')}</span>
-                            </div>
-                          ))
+                          matched.map(st => {
+                            const subForSlot = getSubjectForSlot(st, slot);
+                            return (
+                              <div
+                                key={st._id}
+                                className="student-slot-chip"
+                                onClick={() => onOpenProfile ? onOpenProfile(st) : onEditStudent(st)}
+                              >
+                                <span className="student-name">{st.name}</span>
+                                <span className="student-sub">{subForSlot ? `📘 ${subForSlot.name}${subForSlot.speed ? ' ' + subForSlot.speed + ' WPM' : ''}` : (st.subjects?.length > 0 ? st.subjects.map(x => x.name).join(', ') : (st.batch?.name || 'Active'))}</span>
+                              </div>
+                            );
+                          })
                         ) : (
                           <button
                             type="button"
@@ -1188,8 +1235,9 @@ const blank = {
   mobile: '',
   email: '',
   timing: '9:00 AM – 10:00 AM',
+  timings: ['9:00 AM – 10:00 AM'],
   computer: 'User2',
-  subjects: [{ name: 'English', speed: 30 }],
+  subjects: [{ name: 'English', speed: 30, timing: '9:00 AM – 10:00 AM' }],
   paid: 0,
   payments: [],
   grNo: '',
@@ -1230,7 +1278,15 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
 
   useEffect(() => {
     if (initialStudentForm) {
-      setF(initialStudentForm);
+      let init = { ...initialStudentForm };
+      if (Array.isArray(init.subjects) && init.subjects.length > 0) {
+        const timings = getStudentTimings(init.timings || init.timing);
+        init.subjects = init.subjects.map((sub, idx) => ({
+          ...sub,
+          timing: sub.timing || timings[idx] || timings[0] || '9:00 AM – 10:00 AM'
+        }));
+      }
+      setF(init);
       if (onClearInitialStudentForm) onClearInitialStudentForm();
     }
   }, [initialStudentForm, onClearInitialStudentForm]);
@@ -1311,23 +1367,12 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
   const currentPaid = f ? (Array.isArray(f.payments) && f.payments.length > 0 ? f.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0) : (Number(f.paid) || 0)) : 0;
   const currentPending = Math.max(0, tot - currentPaid);
 
-  const currentTimings = f ? getStudentTimings(f.timings || f.timing) : [];
-  const addTimingSlot = (slot) => {
-    if (!slot) return;
-    const existing = getStudentTimings(f.timings || f.timing);
-    if (existing.includes(slot)) return;
-    const next = [...existing, slot];
-    setF({ ...f, timings: next, timing: next.join(', ') });
-  };
-  const removeTimingSlot = (slot) => {
-    const existing = getStudentTimings(f.timings || f.timing);
-    const next = existing.filter(s => s !== slot);
-    setF({ ...f, timings: next, timing: next.join(', ') });
-  };
+  const currentTimings = f ? getStudentTimings(f) : [];
 
   const save = async () => {
     try {
-      const studentTimings = getStudentTimings(f.timings || f.timing);
+      const subTimings = (f.subjects || []).map(s => s.timing).filter(Boolean);
+      const studentTimings = subTimings.length > 0 ? [...new Set(subTimings)] : getStudentTimings(f);
       const body = {
         ...f,
         timing: studentTimings.join(', '),
@@ -1347,7 +1392,17 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
     }
   };
 
-  const sub = (i, k, v) => setF({ ...f, subjects: f.subjects.map((s, j) => j === i ? { ...s, [k]: k === 'speed' ? +v : v } : s) });
+  const sub = (i, k, v) => setF(prev => {
+    const nextSubs = prev.subjects.map((s, j) => j === i ? { ...s, [k]: k === 'speed' ? +v : v } : s);
+    const subTimings = nextSubs.map(s => s.timing).filter(Boolean);
+    const timings = subTimings.length > 0 ? [...new Set(subTimings)] : getStudentTimings(prev);
+    return {
+      ...prev,
+      subjects: nextSubs,
+      timing: timings.join(', '),
+      timings
+    };
+  });
 
   const handleAddSubject = async (e) => {
     e?.preventDefault();
@@ -1771,28 +1826,27 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
                 </label>
               </div>
 
-              {/* Multiple Practice Time Slots */}
+              {/* Practice Schedule Summary Overview */}
               <div style={{ marginTop: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--line)', borderRadius: 8, padding: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
                   <label style={{ margin: 0, fontWeight: 600, color: 'var(--brass)' }}>
-                    🕒 Practice Time Slot(s) {f.subjects.length > 1 ? `(${f.subjects.length} Subjects: Multiple slots allowed)` : ''}*
+                    🕒 Daily Practice Schedule Overview ({f.subjects.length} {f.subjects.length === 1 ? 'Subject' : 'Subjects'})
                   </label>
                   <span style={{ fontSize: 12, color: 'var(--teal)' }}>
-                    {currentTimings.length} Slot{currentTimings.length !== 1 ? 's' : ''} Selected
+                    {f.subjects.filter(s => s.timing).length} of {f.subjects.length} Slots Assigned
                   </span>
                 </div>
 
-                {/* Selected Slots Badges */}
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10, minHeight: 32 }}>
-                  {currentTimings.map((slot, sIdx) => (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', minHeight: 32 }}>
+                  {f.subjects.map((subItem, sIdx) => (
                     <span
                       key={sIdx}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: 6,
-                        background: 'rgba(31, 111, 104, 0.4)',
-                        border: '1px solid var(--teal)',
+                        background: subItem.timing ? 'rgba(31, 111, 104, 0.4)' : 'rgba(239, 68, 68, 0.15)',
+                        border: subItem.timing ? '1px solid var(--teal)' : '1px dashed #ef4444',
                         color: '#fff',
                         borderRadius: 6,
                         padding: '4px 10px',
@@ -1800,131 +1854,158 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
                         fontWeight: 500
                       }}
                     >
-                      🕒 {slot}
-                      <button
-                        type="button"
-                        onClick={() => removeTimingSlot(slot)}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: '#f87171',
-                          cursor: 'pointer',
-                          padding: 0,
-                          fontSize: 14,
-                          lineHeight: 1,
-                          marginLeft: 4,
-                          fontWeight: 700
-                        }}
-                        title="Remove this slot"
-                      >
-                        ✕
-                      </button>
+                      <span><b>📘 {subItem.name}:</b> {subItem.timing ? `🕒 ${subItem.timing}` : <em style={{ color: '#f87171' }}>No slot chosen</em>}</span>
                     </span>
                   ))}
-                  {currentTimings.length === 0 && (
-                    <span style={{ fontSize: 12, color: '#f87171', padding: '4px 0' }}>
-                      ⚠️ No time slot selected. Please choose a practice time slot below.
-                    </span>
+                </div>
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--mute)' }}>
+                  💡 Assign or change the practice timing slot for each subject individually below in Section 5.
+                </div>
+              </div>
+
+              {/* Course Subjects & Speeds with Subject-Wise Timing Slot */}
+              <div className="form-section-title" style={{ marginTop: 20 }}>
+                📚 5. Enrolled Examination Subjects & Subject-Wise Practice Timings
+              </div>
+              <p style={{ fontSize: 13, color: 'var(--mute)', margin: '0 0 12px' }}>
+                Select separate practice timing slots for each enrolled subject (e.g. English: 9:00 AM – 10:00 AM, Marathi: 3:00 PM – 4:00 PM). Each slot is reserved separately in the computer timetable.
+              </p>
+
+              {f.subjects.map((s, i) => (
+                <div key={i} style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid var(--line)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 6 }}>
+                    <div style={{ fontWeight: 600, color: 'var(--brass)', fontSize: 14 }}>
+                      📘 Subject #{i + 1}: <span style={{ color: '#fff' }}>{s.name || 'Subject'}</span> {s.timing ? `(🕒 ${s.timing})` : ''}
+                    </div>
+                    {f.subjects.length > 1 && (
+                      <button
+                        type="button"
+                        className="del"
+                        style={{ padding: '2px 8px', fontSize: 12, minHeight: 26 }}
+                        onClick={() => setF(prev => {
+                          const nextSubs = prev.subjects.filter((_, j) => j !== i);
+                          const subTimings = nextSubs.map(x => x.timing).filter(Boolean);
+                          return {
+                            ...prev,
+                            subjects: nextSubs,
+                            timing: subTimings.join(', '),
+                            timings: subTimings
+                          };
+                        })}
+                      >
+                        ✕ Remove Subject
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+                    <label style={{ fontSize: 12 }}>Subject Name
+                      <select
+                        value={s.name}
+                        onChange={async e => {
+                          const val = e.target.value;
+                          if (val === '__custom__') {
+                            const customName = prompt('Enter new subject name (e.g. Hindi, GCC-TBC, Shorthand):');
+                            if (customName && customName.trim()) {
+                              await api('/subjects', { method: 'POST', body: { name: customName.trim() } });
+                              sub(i, 'name', customName.trim());
+                              await reload();
+                            }
+                          } else {
+                            sub(i, 'name', val);
+                          }
+                        }}
+                      >
+                        {subjects.map(subName => <option key={subName} value={subName}>{subName}</option>)}
+                        {!subjects.includes(s.name) && <option value={s.name}>{s.name}</option>}
+                        <option value="__custom__">+ Add Custom Subject Name…</option>
+                      </select>
+                    </label>
+
+                    <label style={{ fontSize: 12 }}>Typing Speed & Fee Rate
+                      <select value={s.speed} onChange={e => sub(i, 'speed', e.target.value)}>
+                        {Object.entries(feeOptionsList).map(([vKey, vVal]) => {
+                          const label = ['30', '40', '50'].includes(String(vKey)) ? `${vKey} WPM · ${ru(vVal)}` : ru(vVal);
+                          return <option key={vKey} value={vKey}>{label}</option>;
+                        })}
+                      </select>
+                    </label>
+
+                    <label style={{ fontSize: 12 }}>🕒 Practice Time Slot ({s.name})*
+                      <select
+                        value={s.timing || ''}
+                        onChange={e => sub(i, 'timing', e.target.value)}
+                        style={{ borderColor: s.timing ? 'var(--teal)' : 'var(--line)', fontWeight: 600 }}
+                      >
+                        <option value="">-- Choose Time Slot for {s.name} --</option>
+                        {TIME_SLOTS.map(slot => (
+                          <option key={slot} value={slot}>🕒 {slot}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  {/* Quick Select Chips for this specific subject */}
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 11, color: 'var(--mute)', marginBottom: 4 }}>
+                      Quick Select Time Slot for <b>{s.name}</b>:
+                    </div>
+                    <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                      {TIME_SLOTS.map(slot => {
+                        const isChosen = s.timing === slot;
+                        return (
+                          <button
+                            key={slot}
+                            type="button"
+                            className={isChosen ? 'chip-btn active' : 'chip-btn'}
+                            style={{
+                              padding: '2px 7px',
+                              fontSize: 11,
+                              background: isChosen ? 'var(--teal)' : 'rgba(255,255,255,0.04)',
+                              color: isChosen ? '#fff' : 'var(--text)',
+                              borderColor: isChosen ? 'var(--brass)' : 'var(--line)',
+                              fontWeight: isChosen ? 700 : 400
+                            }}
+                            onClick={() => sub(i, 'timing', isChosen ? '' : slot)}
+                          >
+                            {isChosen ? '✓ ' : ''}{slot}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {s.timing ? (
+                    <div style={{ marginTop: 8, fontSize: 12, color: 'var(--teal)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span>✅</span> <b>{s.name}</b> practice scheduled for <b>{s.timing}</b>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 8, fontSize: 12, color: '#f87171' }}>
+                      ⚠️ Please choose a practice time slot for {s.name}
+                    </div>
                   )}
                 </div>
-
-                {/* Dropdown to add a time slot */}
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <select
-                    value=""
-                    onChange={e => {
-                      if (e.target.value) addTimingSlot(e.target.value);
-                    }}
-                    style={{ flex: 1, minWidth: 220 }}
-                  >
-                    <option value="">+ Click to add a time slot...</option>
-                    {TIME_SLOTS.map(slot => (
-                      <option key={slot} value={slot} disabled={currentTimings.includes(slot)}>
-                        {currentTimings.includes(slot) ? `✓ ${slot} (Already selected)` : `+ ${slot}`}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Quick Toggle Buttons */}
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 11, color: 'var(--mute)', marginBottom: 6 }}>
-                    Quick Select (Click any slot to toggle ON/OFF):
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {TIME_SLOTS.map(slot => {
-                      const isSel = currentTimings.includes(slot);
-                      return (
-                        <button
-                          key={slot}
-                          type="button"
-                          className={isSel ? 'chip-btn active' : 'chip-btn'}
-                          style={{
-                            padding: '3px 8px',
-                            fontSize: 11,
-                            background: isSel ? 'var(--teal)' : 'rgba(255,255,255,0.05)',
-                            color: isSel ? '#fff' : 'var(--text)',
-                            borderColor: isSel ? 'var(--brass)' : 'var(--line)',
-                            fontWeight: isSel ? 600 : 400
-                          }}
-                          onClick={() => isSel ? removeTimingSlot(slot) : addTimingSlot(slot)}
-                        >
-                          {isSel ? '✓ ' : '+ '}{slot}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {f.subjects.length > 1 && (
-                  <div style={{ marginTop: 10, fontSize: 12, color: 'var(--brass)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    💡 Multiple Subjects: This student is enrolled in {f.subjects.length} subjects ({f.subjects.map(s => s.name).join(', ')}). You can assign multiple time slots (e.g. 1 hour per subject) so both slots are reserved in the timetable.
-                  </div>
-                )}
-              </div>
-
-              {/* Course Subjects & Speeds */}
-              <div className="form-section-title" style={{ marginTop: 20 }}>
-                📚 5. Enrolled Examination Subjects & Rates
-              </div>
-              {f.subjects.map((s, i) => (
-                <div className="bar" key={i}>
-                  <select
-                    value={s.name}
-                    onChange={async e => {
-                      const val = e.target.value;
-                      if (val === '__custom__') {
-                        const customName = prompt('Enter new subject name (e.g. Hindi, GCC-TBC, Shorthand):');
-                        if (customName && customName.trim()) {
-                          await api('/subjects', { method: 'POST', body: { name: customName.trim() } });
-                          sub(i, 'name', customName.trim());
-                          await reload();
-                        }
-                      } else {
-                        sub(i, 'name', val);
-                      }
-                    }}
-                  >
-                    {subjects.map(subName => <option key={subName} value={subName}>{subName}</option>)}
-                    {!subjects.includes(s.name) && <option value={s.name}>{s.name}</option>}
-                    <option value="__custom__">+ Add Custom Subject Name…</option>
-                  </select>
-                  <select value={s.speed} onChange={e => sub(i, 'speed', e.target.value)}>
-                    {Object.entries(feeOptionsList).map(([vKey, vVal]) => {
-                      const label = ['30', '40', '50'].includes(String(vKey)) ? `${vKey} WPM · ${ru(vVal)}` : ru(vVal);
-                      return <option key={vKey} value={vKey}>{label}</option>;
-                    })}
-                  </select>
-                  <button type="button" className="del" onClick={() => setF({ ...f, subjects: f.subjects.filter((_, j) => j !== i) })}>Remove</button>
-                </div>
               ))}
+
               <button
                 type="button"
                 className="ghost"
-                style={{ marginBottom: 14 }}
-                onClick={() => setF({ ...f, subjects: [...f.subjects, { name: subjects[0] || 'English', speed: 30 }] })}
+                style={{ marginBottom: 16, borderColor: 'var(--brass)', color: 'var(--brass)', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                onClick={() => {
+                  const nextSub = subjects.find(n => !f.subjects.some(ex => ex.name === n)) || subjects[0] || 'Marathi';
+                  const takenSlots = f.subjects.map(x => x.timing).filter(Boolean);
+                  const nextSlot = TIME_SLOTS.find(sl => !takenSlots.includes(sl)) || TIME_SLOTS[0];
+                  const newSubs = [...f.subjects, { name: nextSub, speed: 30, timing: nextSlot }];
+                  const subTimings = newSubs.map(x => x.timing).filter(Boolean);
+                  setF({
+                    ...f,
+                    subjects: newSubs,
+                    timing: subTimings.join(', '),
+                    timings: subTimings
+                  });
+                }}
               >
-                + Add Another Subject
+                + Add Another Subject (Choose separate Timing Slot & Speed)
               </button>
 
               {/* Multiple Fee Payments Section */}
@@ -2099,30 +2180,31 @@ function Students({ batches, fees, subjects = ['English', 'Marathi', 'Hindi', 'G
                 </td>
                 <td>{s.batch?.name || <em style={{ color: 'var(--mute)' }}>Unassigned</em>}</td>
                 <td>
-                  {s.computer ? (
-                    <div>
+                  {s.computer && (
+                    <div style={{ marginBottom: 4 }}>
                       <b style={{ color: 'var(--brass)' }}>🖥️ {s.computer}</b>
-                      <div style={{ fontSize: 12, color: 'var(--text)', marginTop: 2 }}>
-                        {getStudentTimings(s.timing).length > 0 ? (
-                          getStudentTimings(s.timing).map((tm, tIdx) => (
-                            <span key={tIdx} style={{ display: 'inline-block', background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '1px 6px', margin: '2px 3px 2px 0', fontSize: 11 }}>
-                              🕒 {tm}
-                            </span>
-                          ))
-                        ) : '—'}
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      {getStudentTimings(s.timing).length > 0 ? (
-                        getStudentTimings(s.timing).map((tm, tIdx) => (
-                          <span key={tIdx} style={{ display: 'inline-block', background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '1px 6px', margin: '2px 3px 2px 0', fontSize: 11 }}>
-                            🕒 {tm}
-                          </span>
-                        ))
-                      ) : <span style={{ color: 'var(--mute)', fontSize: 12 }}>Not assigned</span>}
                     </div>
                   )}
+                  <div style={{ fontSize: 12 }}>
+                    {Array.isArray(s.subjects) && s.subjects.some(sub => sub.timing) ? (
+                      s.subjects.map((sub, sIdx) => (
+                        <div key={sIdx} style={{ margin: '2px 0', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                          <span style={{ color: 'var(--mute)' }}>{sub.name}:</span>
+                          <span style={{ background: 'rgba(31, 111, 104, 0.25)', border: '1px solid rgba(45, 143, 134, 0.4)', borderRadius: 4, padding: '1px 5px', color: '#fff', fontWeight: 600 }}>
+                            🕒 {sub.timing || '—'}
+                          </span>
+                        </div>
+                      ))
+                    ) : getStudentTimings(s).length > 0 ? (
+                      getStudentTimings(s).map((tm, tIdx) => (
+                        <span key={tIdx} style={{ display: 'inline-block', background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '1px 6px', margin: '2px 3px 2px 0', fontSize: 11 }}>
+                          🕒 {tm}
+                        </span>
+                      ))
+                    ) : (
+                      <span style={{ color: 'var(--mute)', fontSize: 12 }}>Not assigned</span>
+                    )}
+                  </div>
                 </td>
                 <td>
                   {s.subjects?.map(x => `${x.name} ${['30', '40', '50'].includes(String(x.speed)) ? x.speed + ' WPM' : ru(x.speed)}`).join(', ')}

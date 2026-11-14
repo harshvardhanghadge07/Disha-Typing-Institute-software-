@@ -27,7 +27,7 @@ const Batch=M('Batch',{name:{type:String,unique:true},start:String});
 const Setting=M('Setting',{key:{type:String,unique:true},value:m.Schema.Types.Mixed});
 const Student=M('Student',{
   name:String,mobile:String,email:String,timing:String,timings:[String],computer:String,batch:{type:m.Schema.Types.ObjectId,ref:'Batch'},
-  subjects:[{name:String,speed:Number}],paid:{type:Number,default:0},total:Number,
+  subjects:[{name:String,speed:Number,timing:String}],paid:{type:Number,default:0},total:Number,
   payments:[{amount:Number,date:String,note:String,createdAt:{type:Date,default:Date.now}}],
   grNo:String,motherName:String,gender:String,dob:String,admissionDate:String,qualification:String,address:String,aadharNo:String,photo:String
 });
@@ -281,7 +281,11 @@ api.get('/students',wrap(async(q,r)=>{const f={};if(q.query.batch)f.batch=q.quer
 api.post('/students',wrap(async(q,r)=>{
  const b={...q.body};
  if(!b.batch) delete b.batch;
- if (Array.isArray(b.timings) && b.timings.length > 0) {
+ const subTimings = Array.isArray(b.subjects) ? b.subjects.map(s => s?.timing).filter(Boolean) : [];
+ if (subTimings.length > 0) {
+   b.timings = [...new Set(subTimings)];
+   b.timing = b.timings.join(', ');
+ } else if (Array.isArray(b.timings) && b.timings.length > 0) {
    b.timing = b.timings.filter(Boolean).join(', ');
  } else if (b.timing) {
    b.timings = String(b.timing).split(/[,;|\n]+/).map(s => s.trim()).filter(Boolean);
@@ -298,7 +302,11 @@ api.post('/students',wrap(async(q,r)=>{
 
 api.put('/students/:id',wrap(async(q,r)=>{
  const b={...q.body};
- if (Array.isArray(b.timings) && b.timings.length > 0) {
+ const subTimings = Array.isArray(b.subjects) ? b.subjects.map(s => s?.timing).filter(Boolean) : [];
+ if (subTimings.length > 0) {
+   b.timings = [...new Set(subTimings)];
+   b.timing = b.timings.join(', ');
+ } else if (Array.isArray(b.timings) && b.timings.length > 0) {
    b.timing = b.timings.filter(Boolean).join(', ');
  } else if (b.timing) {
    b.timings = String(b.timing).split(/[,;|\n]+/).map(s => s.trim()).filter(Boolean);
